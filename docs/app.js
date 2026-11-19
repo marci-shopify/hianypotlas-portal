@@ -100,7 +100,8 @@ function progressText(points) {
   const miss = points.filter((p) => p.status === "hianyzik").length;
   if (!points.length) return "Még nincs pont";
   if (ok === points.length) return "Minden pont rendben";
-  return `${ok} / ${points.length} rendben` + (fix ? ` · ${fix} javítandó` : "") + (miss ? ` · ${miss} hiányzik` : "");
+  const wait = points.length - ok - fix - miss;
+  return `${ok} / ${points.length} rendben` + (wait ? ` · ${wait} ellenőrzésre vár` : "") + (fix ? ` · ${fix} javítandó` : "") + (miss ? ` · ${miss} hiányzik` : "");
 }
 
 // Párbeszédablak a natív <dialog>-gal. A build() megkapja a bezáró függvényt.
