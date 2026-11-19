@@ -1,0 +1,5 @@
+# Csak az Edge Function beállítása kell innen; helyi Supabase stacket (Docker) nem használunk.
+project_id = "hianypotlas-portal"
+
+[functions.portal]
+verify_jwt = false   # a jogosultságot a function maga ellenőrzi (admin JWT, illetve x-notify-secret)
