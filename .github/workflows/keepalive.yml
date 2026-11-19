@@ -1,0 +1,17 @@
+# Az ingyenes Supabase projekt 7 nap tétlenség után leáll. Ez a napi kérés ébren tartja.
+# (Második vonal: az adatbázisban a pg_cron „portal-keepalive” feladata ugyanezt teszi belülről.)
+name: keepalive
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Supabase REST ping (a nyilvános kulccsal, a docs/config.js-ből)
+        run: |
+          URL=$(grep -oP 'supabaseUrl: "\K[^"]+' docs/config.js)
+          KEY=$(grep -oP 'supabaseKey: "\K[^"]+' docs/config.js)
+          curl -fsS "$URL/rest/v1/settings?select=brand" -H "apikey: $KEY"
