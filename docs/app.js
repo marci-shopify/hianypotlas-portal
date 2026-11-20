@@ -3,8 +3,9 @@
    XSS-védelem: minden DOM a h() segéddel épül, felhasználói szöveg csak text node-ként kerül ki. */
 
 const cfg = window.PORTAL_CONFIG;
-// A munkamenet sessionStorage-ben él (fülhöz kötött): új fülön / a fül bezárása után újra be kell lépni.
-const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, { auth: { storage: window.sessionStorage } });
+// A munkamenet az alapértelmezett localStorage-ben él: az e-mailben kapott link új fülön is belépve nyílik.
+// Ez csak azért biztonságos, mert a portál SAJÁT eredeten fut (palyazatsegito.hu) – lásd AGENTS.md 4. pont.
+const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
 const app = document.getElementById("app");
 const MAX_FILE = 50 * 1024 * 1024; // a Storage bucket limitje is ennyi
 

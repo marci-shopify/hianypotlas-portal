@@ -13,7 +13,7 @@ jelszóval belép, pontonként feltölti a dokumentumokat, megjegyzést ír, és
 
 | | |
 |---|---|
-| Élő oldal | https://marci-shopify.github.io/hianypotlas-portal/ |
+| Élő oldal | https://palyazatsegito.hu (a régi `marci-shopify.github.io/hianypotlas-portal` és a `www.` ide irányít át) |
 | Kód | https://github.com/marci-shopify/hianypotlas-portal (nyilvános repó, `main` ág) |
 | Backend | Supabase projekt `ubuslaqntdnqscsaisqr` (régió: eu-west-1, ingyenes csomag) |
 | Irányítópult | https://supabase.com/dashboard/project/ubuslaqntdnqscsaisqr |
@@ -122,9 +122,10 @@ aláírt URL-lel történik.
    félbeszakadt feltöltések árva objektumai is eltűnnek. A `delete_file` a hívó saját JWT-jével törli a
    sort, tehát ugyanaz az RLS-szabály dönt, mint bárhol máshol.
 
-**Munkamenet:** a belépési token `sessionStorage`-ben él (fülhöz kötött). Oldalfrissítést túlél, új
-fülön vagy a fül bezárása után újra be kell lépni. Ennek oka a 10. pont első tétele; ne írd át
-`localStorage`-re. Az admin által adott új jelszó a felhasználó minden korábbi munkamenetét megszünteti
+**Munkamenet:** a belépési token a supabase-js alapértelmezett `localStorage`-ében él, így az e-mailben
+kapott link új fülön is belépve nyílik. Ez **csak saját eredeten biztonságos**: amíg a portál a közös
+`*.github.io` címen futott, a token `sessionStorage`-ben volt, mert ott a fiók többi Pages-oldala is
+elérte volna. Ha a portál valaha visszakerül közös eredetre, ezt vissza kell állítani. Az admin által adott új jelszó a felhasználó minden korábbi munkamenetét megszünteti
 (`revoke_sessions`); a már kiadott hozzáférési token legfeljebb 1 óráig még érvényes.
 
 ## 4a. Design elv: „A dosszié”
@@ -176,14 +177,13 @@ Bármilyen SMTP-fiók jó (a vállalkozás saját postafiókja, Gmail alkalmazá
 A Supabase Edge Function a 25-ös és 587-es portot tiltja: **465-öt** (vagy a szolgáltató alternatív
 portját, pl. 2465) kell használni. Ellenőrzés: Beállítások → „Próbalevél küldése magamnak”.
 
-**Jelenlegi állapot (kimérve 2026-11-20):** a küldés a Resend SMTP-jén megy (`smtp.resend.com:465`,
-feladó `onboarding@resend.dev`), és végponttól végpontig működik – a `test:live` valódi levelet küld,
-a Resend naplója szerint kézbesítve. **De:** amíg a Resend-fiókhoz nincs saját, hitelesített domain,
-a Resend **csak a fiók tulajdonosának címére** kézbesít; más címzettnél a küldés hibával tér vissza
-(ez megjelenik a `mail_log`-ban és a piros sávban). Valódi ügyfeleknek tehát akkor megy levél, ha
-(a) a Resendben felvesznek egy domaint (Domains → Add domain, DNS-rekordok a domain szolgáltatójánál),
-és a `MAIL_FROM` erre a domainre mutat (pl. `ertesites@sajatdomain.hu`), vagy (b) a `.env` SMTP-adatait
-a vállalkozás saját postafiókjára cserélik. Utána `node scripts/setup.mjs` és egy próbalevél.
+**Jelenlegi állapot (kimérve 2026-11-20):** a küldés a Resend SMTP-jén megy (`smtp.resend.com:465`),
+feladó `ertesites@palyazatsegito.hu`. A domain a Resendben hitelesített (DKIM, SPF a `send`
+aldomainen, DMARC `p=none`), ezért **bármelyik címre** kézbesít: a `test:live` a Resend saját
+tesztcímére (`delivered@resend.dev`) küldött levelét a Resend „Delivered”-nek jelezte. Saját
+`TEST_EMAIL` helyett is ezt a címet érdemes használni, így valódi embernek nem megy tesztlevél.
+A feladó cím csak küldésre szolgál (nincs hozzá postafiók): az ügyfelek válasza a `reply-to`
+fejléc miatt az admin értesítési címére megy.
 
 **Hibakezelés:** ha a küldés elbukik, a function 15 perc múlva újrapróbálja, de projektenként legfeljebb
 3 kudarcig 2 órán belül (tartós hibánál – rossz cím, rossz jelszó – ne pörögjön). Ha nincs címzett
@@ -218,7 +218,7 @@ A `.env` fájl (a repó gyökerében, gitignore-olva) tartalma:
 ```
 SUPABASE_ACCESS_TOKEN=sbp_…     # Supabase irányítópult → Account → Access Tokens
 SUPABASE_PROJECT_REF=ubuslaqntdnqscsaisqr
-PORTAL_URL=https://marci-shopify.github.io/hianypotlas-portal
+PORTAL_URL=https://palyazatsegito.hu
 NOTIFY_SECRET=…                 # a setup.mjs generálja az első futáskor
 SMTP_HOST= SMTP_PORT= SMTP_USER= SMTP_PASS= MAIL_FROM=     # lásd 5. pont
 TEST_EMAIL=                     # nem kötelező: ide megy a test:live valódi próbalevele
@@ -243,10 +243,23 @@ egészítsd ki a `test/rls.test.mjs`-t az új szabállyal → `npm test` → `no
 check constraint (SQL), a `STATUS` objektum a `docs/app.js` és a `functions/portal/index.ts` elején,
 valamint a színek a `docs/style.css`-ben (`--hianyzik` stb.) és az e-mail `color` táblájában.
 
-**Saját domain.** (1) A domain DNS-ében `CNAME` rekord a `marci-shopify.github.io` címre (aldomainnél),
-(2) a repó Settings → Pages → Custom domain mezőjébe a domain, HTTPS bekapcsolva, (3) a `.env`-ben
-`PORTAL_URL` átírása és `node scripts/setup.mjs` (ettől lesz jó a link az e-mailekben). Ha ugyanarról
-a domainről megy az e-mail is, a levélküldő szolgáltató SPF/DKIM rekordjait is fel kell venni.
+**Saját domain – így van beállítva (2026-11-20).** Domain: `palyazatsegito.hu`, regisztrátor és DNS:
+Rackhost (zóna a `ns1–4.dns24.hu` névszervereken; szerkesztés: rackhost.hu → DNS zónák). Rekordok:
+
+| Név | Típus | Érték | Mire |
+|---|---|---|---|
+| `@` | A ×4 | 185.199.108.153 / .109 / .110 / .111.153 | GitHub Pages |
+| `www` | CNAME | `marci-shopify.github.io` | GitHub Pages (átirányít a csupasz domainre) |
+| `resend._domainkey` | TXT | `p=MIGf…` (a Resend Domains oldaláról) | DKIM |
+| `send` | CNAME | `send.forge.rmta.net` | SPF / visszapattanó levelek |
+| `rsend` | CNAME | `rsend-euw1.forge.rmta.net` | SPF |
+| `_dmarc` | TXT | `v=DMARC1; p=none;` | DMARC |
+
+A repóban a `docs/CNAME` fájl tartalmazza a domaint (ne töröld, különben a Pages leválik róla); a
+Pages beállításban HTTPS kényszerítve, a tanúsítványt a GitHub automatikusan megújítja. Domain-csere
+esetén: új rekordok → `docs/CNAME` → Pages beállítás → `.env` `PORTAL_URL` és `MAIL_FROM` →
+`node scripts/setup.mjs` → a Resendben új domain hitelesítése. (A `hianypotlas.hu` is Marcié, parkol,
+a portál nem használja; a Resendben „Failed” bejegyzésként maradt.)
 
 **Új admin vagy elfelejtett admin-jelszó.** `node scripts/setup.mjs admin <felhasználónév> "<Név>"`.
 
@@ -280,13 +293,6 @@ az új projektbe nem kerülnek át maguktól.
 
 ## 10. Ismert korlátok
 
-- **Közös webes eredet – ÉLES HASZNÁLAT ELŐTT MEGOLDANDÓ.** A portál a `marci-shopify.github.io`
-  eredeten fut, amin ugyanennek a GitHub-fióknak más Pages-oldalai is osztoznak (2026-11-20-án három
-  ilyen volt). A böngésző tárolói eredetenként közösek, tehát ha azok bármelyikén
-  hibás vagy rosszindulatú script fut, az megnyithatja a portált és a belépett felhasználó nevében
-  dolgozhat. Enyhítés már van (a token fülhöz kötött `sessionStorage`-ben él, lásd 4. pont), de a
-  tényleges megoldás a **saját domain** (8. pont, „Saját domain”) – attól a portál külön eredetet kap.
-- **E-mail csak a Resend-fiók tulajdonosának megy**, amíg nincs hitelesített domain (5. pont).
 - **Ingyenes Supabase csomag:** fájlonként 50 MB, összesen 1 GB tárhely, 500 MB adatbázis. Ha betelik,
   a feltöltés hibát ad; megoldás az archivált projektek törlése vagy a fizetős csomag.
 - **Leállás tétlenség miatt:** az ingyenes projekt 7 nap API-forgalom nélkül szünetel. Két védvonal van:
@@ -306,7 +312,7 @@ emelést vagy szerző-hamisítást nem talált. Amit talált, és ami lett vele:
 
 | Megállapítás | Állapot |
 |---|---|
-| Közös webes eredet más Pages-oldalakkal | Enyhítve (`sessionStorage`); végleges megoldás: saját domain – **nyitott** |
+| Közös webes eredet más Pages-oldalakkal | **Megoldva**: saját domain (`palyazatsegito.hu`), 2026-11-20 |
 | Elveszthető / csendben kimaradó értesítés | Javítva: korlátos újrapróbálás, admin-sáv hiányzó címnél, őszinte visszajelzés |
 | Törlés után bennmaradó fájlok | Javítva: szerveroldali törlés előtag alapján; élő teszt ellenőrzi |
 | Feltöltés nélküli fájlsor, hamis méret/dátum, csendes tartalomcsere | Javítva (trigger + oszlopszintű grant + nincs Storage update/delete policy) |

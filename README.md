@@ -3,7 +3,7 @@
 Ügyfélportál pályázatíróknak: az ügyfél pontonként tölti fel a hiánypótlási dokumentumokat, a
 pályázatíró átnézi, elfogad vagy javítást kér, a változásokról mindkét fél e-mailt kap.
 
-**Élő oldal:** https://marci-shopify.github.io/hianypotlas-portal/
+**Élő oldal:** https://palyazatsegito.hu
 
 ## Hogyan működik
 
