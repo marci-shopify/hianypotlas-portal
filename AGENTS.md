@@ -77,7 +77,7 @@ mappát tudja ágról kiszolgálni), nem dokumentáció.
 ```
 profiles  (id = auth.users.id, role: admin|client, username, name, notify_email, notify_email2)
    └─ projects  (client_id, title, reference, deadline, archived, source_path/source_name = eredeti felszólítás, *_notify_at, *_notified_at)
-         └─ points  (position, title, description, status, client_unread, admin_unread)
+         └─ points  (position, title, description, instruction = „Teendő” az ügyfélnek (csak admin írja, kék betűvel látszik, nem üzenet), status, client_unread, admin_unread)
                ├─ files     (path, name, size, uploaded_by, from_admin)
                └─ messages  (author_id, from_admin, body)
 settings  (egyetlen sor: brand = a cég neve a fejlécben és az e-mail feladójaként)
