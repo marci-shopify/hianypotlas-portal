@@ -278,3 +278,28 @@ table.log td { padding: .45rem .6rem .45rem 0; border-bottom: 1px solid var(--so
   .toolbar .btn.danger, .tools .btn.danger { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ── tanácsadó a fejlécben és a belépőn; eredeti felszólítás; kézi értesítés; bemutató (2026-11-20) ── */
+.brand-block { display: flex; flex-direction: column; gap: .15rem; margin-right: auto; text-decoration: none; color: inherit; }
+.advisor { display: inline-flex; align-items: center; gap: .55rem; }
+.advisor img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid var(--line); }
+.advisor span { display: flex; flex-direction: column; line-height: 1.2; }
+.advisor b { font-weight: 600; font-size: .9375rem; }
+.advisor small { color: var(--muted); font-size: .8125rem; }
+.advisor.small { padding-left: 2px; }
+.advisor.small img { width: 26px; height: 26px; border-width: 1px; }
+.advisor.small span { flex-direction: row; gap: .35rem; align-items: baseline; }
+.advisor.small b { font-size: .8125rem; }
+.advisor.small small { font-size: .78rem; }
+.advisor.small small::before { content: "· "; }
+.advisor.light { margin: 1.1rem 0 0; }
+.advisor.light img { width: 52px; height: 52px; border-color: rgba(241, 238, 227, .35); }
+.advisor.light b { color: #f6f3ea; }
+.advisor.light small { color: rgba(241, 238, 227, .72); }
+.auth-art .motto { margin: .6rem 0 0; max-width: 24em; font: italic 500 1.05rem var(--display); color: var(--mint); }
+.hero .facts .source { font: inherit; border: 1px solid rgba(241, 238, 227, .45); cursor: pointer; background: transparent; }
+.hero .facts .source:hover { background: rgba(241, 238, 227, .16); }
+.notify-bar { display: flex; flex-wrap: wrap; gap: .75rem 1.25rem; align-items: center; justify-content: space-between; padding: .85rem 1.1rem; border: 1px solid var(--line); border-radius: 16px; background: var(--soft); margin: 0 0 1rem; }
+.notify-bar .small { color: var(--muted); margin-top: .15rem; }
+.linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--forest); text-decoration: underline; cursor: pointer; }
+.tour-step { margin: -.4rem 0 .4rem; font: italic 500 .95rem var(--display); color: var(--brass); }

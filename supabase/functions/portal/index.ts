@@ -50,6 +50,8 @@ Deno.serve(async (req) => {
       case "delete_client": return json(await deleteClientUser(body.id));
       case "delete_project": return json(await deleteProject(body.id));
       case "delete_point": return json(await deletePoint(body.id));
+      // Az ügyfél CSAK erre kap e-mailt (az admin kézi „Értesítés küldése” gombja), automatikusan soha.
+      case "notify_client": return json(await notify(body.project_id, "client"));
       case "send_credentials": return json(await sendCredentials(body, me.notify_email));
       case "test_email": {
         if (!me.notify_email) fail("Előbb adjon meg értesítési e-mail-címet.");
@@ -78,7 +80,7 @@ async function caller(req: Request) {
 
 const cleanEmail = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
 
-async function createClientUser(b: { username?: string; name?: string; password?: string; notify_email?: string }) {
+async function createClientUser(b: { username?: string; name?: string; password?: string; notify_email?: string; notify_email2?: string }) {
   const username = (b.username ?? "").trim().toLowerCase();
   const name = (b.name ?? "").trim();
   if (!/^[a-z0-9._-]{3,40}$/.test(username)) fail("A felhasználónév 3–40 karakter: kisbetű, szám, pont, kötőjel.");
@@ -91,7 +93,7 @@ async function createClientUser(b: { username?: string; name?: string; password?
   if (error) fail(/already/i.test(error.message) ? "Ez a felhasználónév már foglalt." : error.message);
 
   const { error: pErr } = await db.from("profiles").insert({
-    id: data.user!.id, role: "client", username, name, notify_email: cleanEmail(b.notify_email),
+    id: data.user!.id, role: "client", username, name, notify_email: cleanEmail(b.notify_email), notify_email2: cleanEmail(b.notify_email2),
   });
   if (pErr) {
     await db.auth.admin.deleteUser(data.user!.id);   // ne maradjon profil nélküli fiók
@@ -105,11 +107,12 @@ async function clientOnly(id: string) {
   if (data?.role !== "client") fail("Nincs ilyen ügyfél.");
 }
 
-async function updateClientUser(b: { id: string; name?: string; notify_email?: string | null; password?: string }) {
+async function updateClientUser(b: { id: string; name?: string; notify_email?: string | null; notify_email2?: string | null; password?: string }) {
   await clientOnly(b.id);
   const patch: Record<string, unknown> = {};
   if (b.name !== undefined) patch.name = b.name.trim() || fail("Adja meg az ügyfél nevét.");
   if (b.notify_email !== undefined) patch.notify_email = cleanEmail(b.notify_email);
+  if (b.notify_email2 !== undefined) patch.notify_email2 = cleanEmail(b.notify_email2);
   if (Object.keys(patch).length) {
     const { error } = await db.from("profiles").update(patch).eq("id", b.id);
     if (error) fail(error.code === "23514" ? "Érvénytelen e-mail-cím." : error.message);
@@ -203,7 +206,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 const huDate = (d: string) => d.slice(0, 10).replaceAll("-", ". ") + ".";
 
 type Point = {
-  position: number; title: string; status: string; client_unread: boolean; admin_unread: boolean;
+  position: number; title: string; status: string; client_unread: boolean; admin_unread: boolean; updated_at: string;
   files: { name: string; from_admin: boolean; created_at: string }[];
   messages: { body: string; from_admin: boolean; created_at: string }[];
 };
@@ -213,22 +216,24 @@ async function notify(projectId: string, side: "client" | "admin") {
   const stamp = new Date().toISOString();   // a lekérdezés ELŐTT: ami a küldés alatt érkezik, a következő levélbe kerül
   const { data: p, error } = await db.from("projects")
     .select(`id, title, reference, deadline, client_notified_at, admin_notified_at,
-             client:profiles(name, notify_email),
-             points(position, title, status, client_unread, admin_unread,
+             client:profiles(name, notify_email, notify_email2),
+             points(position, title, status, client_unread, admin_unread, updated_at,
                     files(name, from_admin, created_at), messages(body, from_admin, created_at))`)
     .eq("id", projectId).single();
   if (error) fail(error.message);
-  const client = p!.client as unknown as { name: string; notify_email: string | null };
+  const client = p!.client as unknown as { name: string; notify_email: string | null; notify_email2: string | null };
   const all = (p!.points as Point[]).sort((a, b) => a.position - b.position);
   all.forEach((x, i) => (x.position = i + 1));   // a levélben ugyanaz a sorszám, mint a portálon (1-től, hézag nélkül)
 
   // Csak az, amit a címzett még nem látott a portálon. Ha közben megnézte, nem megy levél.
-  const points = all.filter((x) => (toClient ? x.client_unread : x.admin_unread));
+  const sent = Date.parse((toClient ? p!.client_notified_at : p!.admin_notified_at) ?? "1970-01-01");
+  // ügyfélnél: csak ami a legutóbbi kézi küldés óta változott (különben minden gombnyomás ugyanazt küldené újra)
+  const points = all.filter((x) => (toClient ? x.client_unread && Date.parse(x.updated_at) > sent : x.admin_unread));
   if (!points.length) return { skipped: "nincs olvasatlan" };
 
   const { data: admins } = await db.from("profiles").select("notify_email").eq("role", "admin").not("notify_email", "is", null);
   const adminMails = (admins ?? []).map((a) => a.notify_email as string);
-  const to = toClient ? (client.notify_email ? [client.notify_email] : []) : adminMails;
+  const to = toClient ? [client.notify_email, client.notify_email2].filter((x): x is string => !!x) : adminMails;
   if (!to.length) return { skipped: "nincs címzett" };
 
   const since = Date.parse((toClient ? p!.client_notified_at : p!.admin_notified_at) ?? "1970-01-01");
@@ -283,7 +288,7 @@ ${toClient ? `<p style="font-size:13px;color:#777;font-family:Arial,sans-serif">
     // (tartós hibánál – rossz cím, rossz SMTP-jelszó – ne pörögjön örökké; a hibát a mail_log mutatja az adminnak).
     const { count } = await db.from("mail_log").select("id", { count: "exact", head: true })
       .eq("project_id", p!.id).not("error", "is", null).gt("created_at", new Date(Date.now() - 2 * 3600e3).toISOString());
-    if ((count ?? 0) < 3) {
+    if (!toClient && (count ?? 0) < 3) {   // ügyfél felé nincs automatikus újrapróbálás: az admin látja a hibát és újraküldi
       const retryAt = new Date(Date.now() + 15 * 60e3).toISOString();
       await db.from("projects").update(toClient ? { client_notify_at: retryAt } : { admin_notify_at: retryAt }).eq("id", p!.id);
     }

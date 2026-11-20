@@ -2,6 +2,8 @@
    Adat: Supabase (táblák RLS-sel + Storage + egy Edge Function). Részletek: AGENTS.md
    XSS-védelem: minden DOM a h() segéddel épül, felhasználói szöveg csak text node-ként kerül ki. */
 
+import { pdfPages, extractPoints, extractMeta, splitTitle } from "./hp-parse.js";
+
 const cfg = window.PORTAL_CONFIG;
 // A munkamenet az alapértelmezett localStorage-ben él: az e-mailben kapott link új fülön is belépve nyílik.
 // Ez csak azért biztonságos, mert a portál SAJÁT eredeten fut (palyazatsegito.hu) – lásd AGENTS.md 4. pont.
@@ -14,7 +16,7 @@ let me = null;                       // a belépett felhasználó profilja
 let brand = "Pályázatsegítő";
 let renderNo = 0;                    // versenyhelyzet ellen: csak a legutolsó render írhat a DOM-ba
 const openState = new Map();         // pont id → nyitva van-e (újrarajzolás után megmarad)
-const drafts = new Map();            // pont id → félbehagyott megjegyzés
+const drafts = new Map();            // pont id → félbehagyott üzenet
 
 // ───────────────────────── segédek ─────────────────────────
 
@@ -89,8 +91,28 @@ const genPassword = () => {
 const slug = (s) => noAccents(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
 const initials = (s) => s.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-// „1. Cégkivonat”, „2) …”, „- …” → a sorszámot/jelölőt levágjuk, a sorrend úgyis megmarad
-const parsePoints = (text) => text.split("\n").map((l) => l.replace(/^\s*(\d+\s*[.)]|[-–•*])\s*/, "").trim()).filter(Boolean);
+// „1. Cégkivonat”, „2) …”, „- …” → a sorszámot/jelölőt levágjuk, a sorrend úgyis megmarad.
+// Hosszú pont (pl. a felszólításból beolvasott bekezdés): rövid cím + a teljes szöveg leírásként.
+const parsePoints = (text) => text.split("\n").map((l) => l.replace(/^\s*(\d+\s*[.)]|[-–•*])\s*/, "").trim()).filter(Boolean).map((t) => splitTitle(t));
+const ADVISOR = { name: "Nagy Henrietta", role: "vezető tanácsadó", photo: "img/henrietta.jpg" };
+const MOTTO = "Interaktív felület a pályázatok megvalósítási szakaszában";
+const advisor = (cls) => h("div", { class: "advisor " + (cls || "") },
+  h("img", { src: ADVISOR.photo, alt: ADVISOR.name, width: 40, height: 40 }),
+  h("span", {}, h("b", {}, ADVISOR.name), h("small", {}, ADVISOR.role)));
+
+// A felszólítás PDF-jének beolvasása (a pdf.js csak most töltődik be, és csak adminnál).
+async function readNotice(file) {
+  const pdfjs = await import("./vendor/pdfjs/pdf.min.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdfjs/pdf.worker.min.mjs", import.meta.url).href;
+  const pages = await pdfPages(pdfjs, new Uint8Array(await file.arrayBuffer()));
+  return { points: extractPoints(pages), meta: extractMeta(pages) };
+}
+async function uploadNotice(projectId, file) {
+  const path = `${projectId}/forras/${crypto.randomUUID()}-${asciiName(file.name)}`;
+  need(await sb.storage.from("docs").upload(path, file, { contentType: "application/pdf" }));
+  need(await sb.from("projects").update({ source_path: path, source_name: file.name }).eq("id", projectId));
+}
+const pdfInput = (onFile) => h("input", { type: "file", accept: "application/pdf,.pdf", onchange: (ev) => ev.target.files[0] && onFile(ev.target.files[0], ev.target) });
 
 function dueLabel(deadline) {
   if (!deadline) return null;
@@ -198,17 +220,42 @@ async function render(keepScroll) {
   if (no !== renderNo) return;
   app.replaceChildren(...[view].flat());
   window.scrollTo(0, keepScroll ? y : 0);
+  if (me?.role === "client" && me.notify_email && !seenTour() && !document.querySelector("dialog[open]")) tour();
+}
+
+// Ügyfél első belépése: gyors, 4 lépéses bemutató. Utána a fejléc „Súgó” gombjával újranyitható.
+const TOUR_KEY = () => `tour-${me.id}`;
+const seenTour = () => { try { return localStorage.getItem(TOUR_KEY()) === "1"; } catch { return true; } };
+const TOUR = [
+  ["Üdvözöljük!", `Ez a felület ${ADVISOR.name} (${brand}) és Ön közös munkaterülete a hiánypótláshoz. Négy lépésben megmutatjuk, hogyan működik.`],
+  ["A pontok", "A hivatal felszólításának minden pontja egy külön lap. Kattintson egy pontra, és kinyílik: ott látja, mit kérnek, és mi az állapota (Hiányzik, Ellenőrzésre vár, Javítandó, Rendben)."],
+  ["Feltöltés", "A kinyitott ponton a „Fájlok kiválasztása” mezővel töltheti fel a kért dokumentumokat – telefonról fotót is készíthet. Feltöltés után a pont „Ellenőrzésre vár” lesz."],
+  ["Üzenet és az eredeti felszólítás", "Minden pont alján üzenetet írhat, ha kérdése van. Az oldal tetején az „Eredeti felszólítás” gombbal bármikor megnézheti a hivatal levelét. Ha valamit javítani kell, e-mailben szólunk."],
+];
+function tour(step = 0) {
+  modal(TOUR[step][0], (close) => [
+    h("p", { class: "tour-step" }, `${step + 1} / ${TOUR.length}`),
+    h("p", {}, TOUR[step][1]),
+    h("div", { class: "row end actions" },
+      step > 0 && h("button", { class: "btn", onclick: () => { close(); tour(step - 1); } }, "Vissza"),
+      h("button", { class: "btn primary", onclick: () => {
+        close();
+        if (step + 1 < TOUR.length) return tour(step + 1);
+        try { localStorage.setItem(TOUR_KEY(), "1"); } catch { /* privát mód: legközelebb újra megjelenik */ }
+      } }, step + 1 < TOUR.length ? "Tovább" : "Kezdhetjük")),
+  ], true);
 }
 const refresh = () => render(true);
 
 function header(route) {
   const link = (href, text, key) => h("a", { href, "aria-current": route === key || (!route && !key) || (route === "p" && !key) ? "page" : null }, text);
   return h("header", { class: "top" }, h("div", { class: "inner" },
-    h("a", { class: "brand", href: "#/" }, mark(), brand),
+    h("a", { class: "brand-block", href: "#/" }, h("span", { class: "brand" }, mark(), brand), advisor("small")),
     h("nav", {},
       link("#/", "Projektek", undefined),
       me.role === "admin" && link("#/ugyfelek", "Ügyfelek", "ugyfelek"),
       link("#/beallitasok", "Beállítások", "beallitasok"),
+      me.role === "client" && h("button", { onclick: () => tour() }, "Súgó"),
       h("button", { onclick: async () => { await sb.auth.signOut(); me = null; location.hash = "#/"; render(); } }, "Kilépés"))));
 }
 
@@ -219,6 +266,8 @@ const authShell = (formTitle, formSub, form, note) => h("div", { class: "auth" }
   h("aside", { class: "auth-art" },
     h("div", { class: "deco", "aria-hidden": "true" }, h("i"), h("i"), h("i")),
     h("div", { class: "brand light" }, mark(), brand),
+    h("p", { class: "motto" }, MOTTO),
+    advisor("light"),
     h("h1", {}, "A hiánypótlás ", h("em", {}, "rendben"), " lesz."),
     h("p", { class: "lead" }, "Pontról pontra látja, mi hiányzik még, mit kell javítani, és mi van már elfogadva."),
     h("ol", { class: "steps" },
@@ -318,25 +367,42 @@ async function homeView() {
 async function newProjectDialog(presetClientId) {
   const clients = need(await sb.from("profiles").select("id, name").eq("role", "client").order("name"));
   if (!clients.length) return clientDialog(null, (id) => newProjectDialog(id));
+  let notice = null;
+  const title = h("input", { type: "text", name: "title", required: true, maxlength: 200, placeholder: "pl. Telephelyfejlesztés – hiánypótlás" });
+  const reference = h("input", { type: "text", name: "reference", maxlength: 100, placeholder: "nem kötelező" });
+  const pointsBox = h("textarea", { name: "points", rows: 7, placeholder: "1. Cégkivonat (30 napnál nem régebbi)\n2. Aláírási címpéldány\n3. Árajánlatok" });
+  const pdfStatus = h("span", { class: "hint" }, "A pontokat a program felismeri belőle, és az ügyfél is látni fogja az eredetit.");
+  const onPdf = (file) => run(null, async () => {
+    pdfStatus.textContent = "Beolvasás…";
+    const { points, meta } = await readNotice(file).catch((e) => { pdfStatus.textContent = "Ezt a PDF-et nem sikerült beolvasni – a pontokat írja be kézzel."; throw e; });
+    notice = file;
+    if (!title.value && meta.title) title.value = meta.title;
+    if (!reference.value && meta.reference) reference.value = meta.reference;
+    if (points.length) pointsBox.value = points.map((p, i) => `${i + 1}. ${p}`).join("\n");
+    pdfStatus.textContent = points.length
+      ? `${points.length} pontot ismertem fel – lent ellenőrizheti és javíthatja.${meta.days ? ` A felszólítás szerint ${meta.days} nap a határidő a kézhezvételtől.` : ""}`
+      : "A pontokat nem sikerült felismerni – kérem, írja be vagy másolja be őket lent. A PDF így is csatolva lesz.";
+  });
   formModal("Új projekt", [
+    field("Hiánypótlási felszólítás (PDF)", pdfInput(onPdf), pdfStatus),
     field("Ügyfél", h("select", { name: "client_id", required: true, value: presetClientId || clients[0].id },
       clients.map((c) => h("option", { value: c.id }, c.name)))),
     h("p", { class: "small", style: "margin:-.6rem 0 .6rem" }, h("button", { class: "btn quiet", type: "button", onclick: (ev) => { ev.target.closest("dialog").close(); ev.target.closest("dialog").remove(); clientDialog(null, (id) => newProjectDialog(id)); } }, "+ Új ügyfél felvétele")),
-    field("Projekt neve", h("input", { type: "text", name: "title", required: true, maxlength: 200, placeholder: "pl. Telephelyfejlesztés – hiánypótlás" })),
+    field("Projekt neve", title),
     h("div", { class: "two" },
-      field("Pályázati azonosító", h("input", { type: "text", name: "reference", maxlength: 100, placeholder: "nem kötelező" })),
+      field("Pályázati azonosító", reference),
       field("Határidő (nem kötelező)", h("input", { type: "date", name: "deadline" }))),
-    field("Hiánypótlási pontok", h("textarea", { name: "points", rows: 5, placeholder: "1. Cégkivonat (30 napnál nem régebbi)\n2. Aláírási címpéldány\n3. Árajánlatok" }),
-      "Soronként egy pont – a felszólítás listája egyben bemásolható. Később is bővíthető."),
+    field("Hiánypótlási pontok", pointsBox, "Soronként egy pont. Később is bővíthető."),
   ], "Létrehozás", async (v) => {
     const proj = need(await sb.from("projects").insert({
       client_id: v.client_id, title: v.title.trim(), reference: v.reference.trim() || null, deadline: v.deadline || null,
     }).select("id").single());
     const pts = parsePoints(v.points);
     if (pts.length) {
-      const { error } = await sb.from("points").insert(pts.map((title, i) => ({ project_id: proj.id, position: i + 1, title })));
+      const { error } = await sb.from("points").insert(pts.map((p, i) => ({ project_id: proj.id, position: i + 1, ...p })));
       if (error) toast(`A projekt létrejött, de a pontok mentése nem sikerült (${explain(error)}). A „Pontok hozzáadása” gombbal pótolhatók.`, true);
     }
+    if (notice) await uploadNotice(proj.id, notice).catch((e) => toast(`A felszólítás PDF-jét nem sikerült csatolni (${explain(e)}). A projekt oldalán újra feltölthető.`, true));
     location.hash = `#/p/${proj.id}`;
   });
 }
@@ -346,7 +412,7 @@ async function newProjectDialog(presetClientId) {
 async function projectView(id) {
   const admin = me.role === "admin";
   const project = need(await sb.from("projects")
-    .select("*, client:profiles(id, name, username, notify_email), points(*, files(*), messages(*))").eq("id", id).maybeSingle());
+    .select("*, client:profiles(id, name, username, notify_email, notify_email2), points(*, files(*), messages(*))").eq("id", id).maybeSingle());
   if (!project) return h("div", { class: "empty", style: "margin-top:2.5rem" }, h("strong", {}, "Ez a projekt nem található"), h("a", { href: "#/" }, "Vissza a listához"));
   const points = project.points.sort(byPos);
 
@@ -366,12 +432,15 @@ async function projectView(id) {
         h("div", {},
           h("p", { class: "client" }, [admin && project.client.name, project.reference].filter(Boolean).join(" · ") || "Hiánypótlás"),
           h("h1", {}, project.title),
-          h("div", { class: "facts" }, h("span", {}, progressText(points)), dueLabel(project.deadline))),
+          h("div", { class: "facts" }, h("span", {}, progressText(points)), dueLabel(project.deadline),
+            project.source_path && h("button", { class: "source", onclick: () => openFile({ path: project.source_path, name: project.source_name || "felszolitas.pdf" }) }, "Eredeti felszólítás (PDF)"))),
         points.length > 0 && h("div", { class: "ring", style: `--p:${Math.round((ok / points.length) * 100)}`, role: "img", "aria-label": `${ok} / ${points.length} pont rendben` },
           h("span", {}, String(ok), h("small", {}, ` / ${points.length}`)))),
       points.length > 0 && segbar(points)),
-    admin && !project.client.notify_email && h("div", { class: "notice" }, "Az ügyfél még nem adott meg e-mail-címet (első belépéskor kérjük be), addig nem kap értesítést."),
+    admin && notifyBar(project, points),
     admin && h("div", { class: "toolbar" },
+      !project.source_path && h("label", { class: "btn quiet" }, "Felszólítás (PDF) csatolása",
+        h("input", { type: "file", accept: "application/pdf,.pdf", hidden: true, onchange: (ev) => run(null, async () => { await uploadNotice(project.id, ev.target.files[0]); toast("Csatolva – az ügyfél is látja."); refresh(); }) })),
       h("button", { class: "btn quiet", onclick: () => addPointsDialog(project, points) }, "+ Pontok hozzáadása"),
       h("button", { class: "btn quiet", onclick: () => editProjectDialog(project) }, "Adatok szerkesztése"),
       files.length > 0 && h("button", { class: "btn quiet", onclick: (ev) => run(ev.target, () => downloadZip(project, points)) }, `Összes fájl letöltése (${files.length})`),
@@ -382,6 +451,27 @@ async function projectView(id) {
   ];
 }
 
+// Az ügyfél CSAK erre a gombra kap e-mailt: összefoglaló a még nem látott pontokról (új pont, üzenet, státusz).
+function notifyBar(project, points) {
+  const c = project.client;
+  const to = [c.notify_email, c.notify_email2].filter(Boolean);
+  const fresh = points.filter((p) => p.client_unread && (!project.client_notified_at || p.updated_at > project.client_notified_at)).length;
+  const editEmails = h("button", { class: "linkish", onclick: () => clientDialog(c, refresh) }, to.length ? "címek módosítása" : "e-mail-cím megadása");
+  return h("div", { class: "notify-bar" },
+    h("div", {},
+      h("strong", {}, fresh ? `${fresh} pontnál van újdonság, amiről az ügyfél még nem kapott e-mailt.` : "Nincs elküldetlen újdonság."),
+      h("div", { class: "small" }, to.length ? `Címzett: ${to.join(", ")} · ` : "Az ügyfélnek még nincs e-mail-címe · ", editEmails)),
+    h("button", {
+      class: "btn primary", disabled: !fresh || !to.length || null,
+      onclick: (ev) => run(ev.target, async () => {
+        if (!(await confirmBox(`Elküldi az összefoglaló e-mailt ide: ${to.join(", ")}?`, "Küldés"))) return;
+        const r = await api("notify_client", { project_id: project.id });
+        toast(r?.sent ? `E-mail elküldve (${to.join(", ")}).` : "Nem ment levél: az ügyfél már mindent látott a portálon.");
+        refresh();
+      }),
+    }, "Értesítés küldése az ügyfélnek"));
+}
+
 function pointCard(project, p, no) {
   const admin = me.role === "admin";
   const locked = !admin && p.status === "elfogadva";
@@ -390,8 +480,8 @@ function pointCard(project, p, no) {
   const myFiles = (f) => admin || (f.uploaded_by === me.id && !locked);
 
   const text = h("textarea", {
-    rows: 2, maxlength: 5000, "aria-label": "Megjegyzés",
-    placeholder: admin ? "Üzenet az ügyfélnek – pl. mit kell még javítani" : "Megjegyzés a pályázatírónak (nem kötelező)",
+    rows: 2, maxlength: 5000, "aria-label": "Üzenet",
+    placeholder: admin ? "Üzenet az ügyfélnek – pl. mit kell még javítani" : "Kérdése van? Írja ide.",
     oninput: () => drafts.set(p.id, text.value),
   }, drafts.get(p.id) || "");
   const send = (status, mustWrite) => (ev) => run(ev.target, async () => {
@@ -402,8 +492,7 @@ function pointCard(project, p, no) {
     drafts.delete(p.id);
     if (status === "elfogadva") openState.delete(p.id);
     toast(!admin ? "Elküldve."
-      : project.client.notify_email ? "Elküldve. Az ügyfél kb. 5 perc múlva összefoglaló e-mailt kap (ha addig nem nézi meg a portálon)."
-      : "Elküldve. Az ügyfélnek még nincs e-mail-címe, ezért levelet nem kap – a portálon látni fogja.");
+      : "Elküldve. Az ügyfél a portálon látja; e-mailt akkor kap, ha fent az „Értesítés küldése” gombra kattint.");
     refresh();
   });
 
@@ -437,7 +526,7 @@ function pointCard(project, p, no) {
         : h("p", { class: "muted small", style: "margin:0" }, "Még nincs feltöltött fájl."),
       locked ? h("p", { class: "locked" }, "✓ Ezt a pontot elfogadtuk, további teendője nincs vele.") : [drop, status],
 
-      h("h3", {}, "Megjegyzések"),
+      h("h3", {}, "Üzenetek"),
       p.messages.length > 0 && h("div", { class: "thread" }, p.messages.sort(byTime).map((m) => h("div", { class: "msg" + (m.from_admin === admin ? " mine" : "") },
         h("div", { class: "who" }, `${m.from_admin === admin ? "Ön" : admin ? project.client.name : brand} · ${fmtTime(m.created_at)}`),
         h("div", { class: "text" }, m.body)))),
@@ -446,7 +535,7 @@ function pointCard(project, p, no) {
           h("button", { class: "btn", onclick: send(null) }, "Üzenet küldése"),
           p.status !== "javitando" && h("button", { class: "btn warn", onclick: send("javitando", true) }, "Javítást kérek"),
           p.status !== "elfogadva" && h("button", { class: "btn ok", onclick: send("elfogadva") }, "Elfogadom"),
-        ] : h("button", { class: "btn primary", onclick: send(null) }, "Megjegyzés küldése"))),
+        ] : h("button", { class: "btn primary", onclick: send(null) }, "Üzenet küldése"))),
 
       admin && h("div", { class: "tools row" },
         h("button", { class: "btn quiet", onclick: () => editPointDialog(p) }, "Pont szerkesztése"),
@@ -562,12 +651,12 @@ function editPointDialog(p) {
 }
 
 async function deletePoint(p) {
-  if (!(await confirmBox(`Törli a(z) „${p.title}” pontot a feltöltött fájlokkal és megjegyzésekkel együtt? Ez nem vonható vissza.`))) return;
+  if (!(await confirmBox(`Törli a(z) „${p.title}” pontot a feltöltött fájlokkal és üzenetekkel együtt? Ez nem vonható vissza.`))) return;
   run(null, async () => { await api("delete_point", { id: p.id }); refresh(); });
 }
 
 async function deleteProject(project, files) {
-  if (!(await confirmBox(`Törli a(z) „${project.title}” projektet minden ponttal, fájllal (${files.length} db) és megjegyzéssel együtt? Ez nem vonható vissza.`))) return;
+  if (!(await confirmBox(`Törli a(z) „${project.title}” projektet minden ponttal, fájllal (${files.length} db) és üzenettel együtt? Ez nem vonható vissza.`))) return;
   run(null, async () => { await api("delete_project", { id: project.id }); toast("Projekt törölve."); location.hash = "#/"; });
 }
 
@@ -582,7 +671,7 @@ async function clientsView() {
       h("div", { class: "avatar", "aria-hidden": "true" }, initials(c.name)),
       h("div", {},
         h("div", { class: "name" }, c.name),
-        h("div", { class: "muted small" }, `Felhasználónév: ${c.username} · ${c.notify_email || "e-mail-címet még nem adott meg"} · ${c.projects.length} projekt`)),
+        h("div", { class: "muted small" }, `Felhasználónév: ${c.username} · ${[c.notify_email, c.notify_email2].filter(Boolean).join(", ") || "nincs e-mail-cím"} · ${c.projects.length} projekt`)),
       h("div", { class: "row small" },
         h("button", { class: "btn quiet", onclick: () => newProjectDialog(c.id) }, "Új projekt"),
         h("button", { class: "btn quiet", onclick: () => clientDialog(c, refresh) }, "Szerkesztés"),
@@ -600,11 +689,14 @@ function clientDialog(c, then) {
   formModal(c ? "Ügyfél szerkesztése" : "Új ügyfél", [
     field("Név", h("input", { type: "text", name: "name", required: true, maxlength: 200, value: c?.name || "", placeholder: "Cégnév vagy kapcsolattartó", oninput: (ev) => { if (!c && !touched) username.value = slug(ev.target.value); } })),
     !c && field("Felhasználónév", username, "Ezzel lép be: kisbetű, szám, pont, kötőjel."),
-    field("E-mail-cím", h("input", { type: "email", name: "notify_email", value: c?.notify_email || "" }), "Ide mennek az értesítések. Nem kötelező – ha üres, az ügyfél adja meg az első belépéskor."),
+    h("div", { class: "two" },
+      field("E-mail-cím", h("input", { type: "email", name: "notify_email", value: c?.notify_email || "" })),
+      field("Második e-mail-cím", h("input", { type: "email", name: "notify_email2", value: c?.notify_email2 || "" }))),
+    h("p", { class: "hint", style: "margin:-.4rem 0 .9rem" }, "Az értesítések mindkét címre mennek, de csak akkor, ha a projekt oldalán Ön elküldi őket. Nem kötelező – később is megadható."),
     !c && field("Jelszó", h("input", { type: "text", name: "password", required: true, minlength: 8, value: genPassword(), autocomplete: "off" }), "Előre generáltuk; átírható (legalább 8 karakter)."),
   ], c ? "Mentés" : "Létrehozás", async (v) => {
     if (c) {
-      await api("update_client", { id: c.id, name: v.name, notify_email: v.notify_email });
+      await api("update_client", { id: c.id, name: v.name, notify_email: v.notify_email, notify_email2: v.notify_email2 });
       then(c.id);
     } else {
       const { id } = await api("create_client", v);
@@ -648,7 +740,7 @@ function credentialsDialog(client, password, then) {
 }
 
 async function deleteClient(c) {
-  if (!(await confirmBox(`Törli a(z) „${c.name}” ügyfelet? Vele együtt törlődik mind a(z) ${c.projects.length} projektje, minden feltöltött fájl és megjegyzés. Ez nem vonható vissza.`))) return;
+  if (!(await confirmBox(`Törli a(z) „${c.name}” ügyfelet? Vele együtt törlődik mind a(z) ${c.projects.length} projektje, minden feltöltött fájl és üzenet. Ez nem vonható vissza.`))) return;
   run(null, async () => { await api("delete_client", { id: c.id }); toast("Ügyfél törölve."); refresh(); });
 }
 
@@ -667,11 +759,13 @@ async function settingsView() {
     h("div", { class: "page-head" }, h("h1", {}, "Beállítások"), h("p", { class: "sub" }, `${me.name} · felhasználónév: ${me.username}`)),
 
     h("section", { class: "card" }, h("h2", {}, "Értesítési e-mail-cím"),
-      simpleForm(field("E-mail-cím", h("input", { type: "email", name: "email", required: true, value: me.notify_email || "" }),
-        admin ? "Ide érkezik levél, ha egy ügyfél fájlt tölt fel vagy megjegyzést ír. Az ügyfelek erre a címre tudnak válaszolni." : "Ide küldünk értesítést, ha üzenetet kap, vagy valamit javítani kell."),
+      simpleForm([field("E-mail-cím", h("input", { type: "email", name: "email", required: true, value: me.notify_email || "" }),
+        admin ? "Ide érkezik levél, ha egy ügyfél fájlt tölt fel vagy üzenetet ír. Az ügyfelek erre a címre tudnak válaszolni." : "Ide küldünk értesítést, ha üzenetet kap, vagy valamit javítani kell."),
+        !admin && field("Második e-mail-cím (nem kötelező)", h("input", { type: "email", name: "email2", value: me.notify_email2 || "" }), "Pl. a könyvelő vagy egy kolléga – ő is megkapja az értesítést.")],
         "Mentés", async (v) => {
-          need(await sb.from("profiles").update({ notify_email: v.email.trim() }).eq("id", me.id));
-          me.notify_email = v.email.trim(); toast("Mentve.");
+          const patch = { notify_email: v.email.trim(), ...(admin ? {} : { notify_email2: v.email2.trim() || null }) };
+          need(await sb.from("profiles").update(patch).eq("id", me.id));
+          Object.assign(me, patch); toast("Mentve.");
         }),
       admin && h("p", { style: "margin:1rem 0 0" }, h("button", { class: "btn", onclick: (ev) => run(ev.target, async () => { await api("test_email"); toast(`Próbalevél elküldve ide: ${me.notify_email}`); refresh(); }) }, "Próbalevél küldése magamnak"))),
 
@@ -696,7 +790,7 @@ async function settingsView() {
         h("td", {}, l.recipients),
         h("td", {}, l.subject, l.error && h("div", { class: "s-javitando" }, `Hiba: ${l.error}`))))))
         : h("p", { class: "muted small" }, "Még nem ment ki levél."),
-      h("p", { class: "muted small", style: "margin:.75rem 0 0" }, "Az értesítés az utolsó változás után kb. 5 perccel megy ki, egy levélben összefoglalva. Ha a címzett közben megnézte a portálon, nem küldünk levelet.")),
+      h("p", { class: "muted small", style: "margin:.75rem 0 0" }, "Az Ön értesítése az utolsó ügyfél-tevékenység után kb. 5 perccel megy ki, egy levélben összefoglalva. Az ügyfél csak akkor kap levelet, ha a projekt oldalán az „Értesítés küldése” gombra kattint.")),
   ];
 }
 

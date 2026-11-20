@@ -52,14 +52,18 @@ funkciót építesz, először a szabályt írd meg SQL-ben és tedd tesztbe, cs
 |---|---|
 | `docs/index.html`, `style.css` | Váz és kinézet. A design elvét lásd a 4a. pontban; külső kérés nincs. |
 | `docs/fonts/` | Fraunces + Instrument Sans (változó súlyú woff2, latin + latin-ext), az npm `@fontsource-variable` csomagokból bemásolva, licencfájlokkal. |
-| `docs/app.js` | A teljes felület (belépés, projektlista, projekt nézet, ügyfelek, beállítások). |
+| `docs/app.js` | A teljes felület (belépés, projektlista, projekt nézet, ügyfelek, beállítások, ügyfél-bemutató). |
+| `docs/hp-parse.js` | A hiánypótlási felszólítás (PDF) pontjainak felismerése. Böngésző és Node közös kódja. |
+| `docs/img/henrietta.jpg` | A tanácsadó fotója (192 px, kis méretben jelenik meg – a forrás nem nagy felbontású). |
 | `docs/config.js` | Supabase URL + nyilvános kulcs + `authDomain`. A `scripts/setup.mjs` tölti ki. |
-| `docs/vendor/` | `supabase.js` és `jszip.min.js` bemásolva az npm-csomagból (nincs CDN-függés). |
+| `docs/vendor/` | `supabase.js`, `jszip.min.js` és `pdfjs/` (pdfjs-dist 4.10.38, csak adminnál töltődik be) bemásolva az npm-csomagból (nincs CDN-függés). |
 | `supabase/migrations/*.sql` | A teljes séma: táblák, RLS, triggerek, RPC-k, Storage policy-k, cron. |
 | `supabase/functions/portal/index.ts` | Az egyetlen Edge Function (Deno). |
 | `supabase/config.toml` | Csak annyi, hogy a function `verify_jwt = false` (saját maga ellenőriz). |
 | `scripts/sql.mjs` | SQL futtatása az éles adatbázison a Management API-n át. |
 | `scripts/setup.mjs` | Secretek, értesítés-bekötés, auth-beállítás, `config.js`; admin fiók. |
+| `scripts/import-pdf.mjs` | Projekt egy felszólítás-PDF-ből: `node scripts/import-pdf.mjs <pdf> "<Ügyfél neve>" [felhasználónév]`. Meglévő ügyfelet név/felhasználónév szerint megtalál, különben létrehozza – e-mail-cím és levél nélkül. |
+| `test/parse.test.mjs` | A PDF-felismerő próbája: `node test/parse.test.mjs <pdf> [várt pontszám]` (valódi ügyfél-PDF nem kerülhet a repóba). |
 | `test/rls.test.mjs` | Biztonsági önteszt beágyazott Postgresen (PGlite). Hálózat nem kell hozzá. |
 | `test/live.test.mjs` | Végponttól végpontig teszt az éles backenden, eldobható tesztfiókokkal. |
 | `.github/workflows/keepalive.yml` | Napi ping, hogy az ingyenes Supabase projekt ne álljon le. |
@@ -71,8 +75,8 @@ mappát tudja ágról kiszolgálni), nem dokumentáció.
 ## 4. Adatmodell
 
 ```
-profiles  (id = auth.users.id, role: admin|client, username, name, notify_email)
-   └─ projects  (client_id, title, reference, deadline, archived, *_notify_at, *_notified_at)
+profiles  (id = auth.users.id, role: admin|client, username, name, notify_email, notify_email2)
+   └─ projects  (client_id, title, reference, deadline, archived, source_path/source_name = eredeti felszólítás, *_notify_at, *_notified_at)
          └─ points  (position, title, description, status, client_unread, admin_unread)
                ├─ files     (path, name, size, uploaded_by, from_admin)
                └─ messages  (author_id, from_admin, body)
@@ -128,6 +132,12 @@ kapott link új fülön is belépve nyílik. Ez **csak saját eredeten biztonsá
 elérte volna. Ha a portál valaha visszakerül közös eredetre, ezt vissza kell állítani. Az admin által adott új jelszó a felhasználó minden korábbi munkamenetét megszünteti
 (`revoke_sessions`); a már kiadott hozzáférési token legfeljebb 1 óráig még érvényes.
 
+**Eredeti felszólítás:** `{project_id}/forras/{uuid}-{név}.pdf`. Csak admin tölthet ide (`docs_insert_source` policy), olvasni az admin és a projekt ügyfele tud (`docs_read`). A projekt törlése előtag alapján ezt is viszi.
+
+**Felismerés (`docs/hp-parse.js`):** a leghosszabb 1., 2., 3. … sorozatot keresi; egy pont több soron és oldalhatáron át is tarthat (ha az utolsó sora a jobb margóig ér, az oldal alján lévő élőlábat átugorja, és a következő oldal első bekezdése a folytatás). 140 karakternél hosszabb pontnál rövid cím + a teljes szöveg leírásként. A felület az eredményt MINDIG szerkeszthető szövegként mutatja mentés előtt. Kimérve: a Kincstár KAP kifizetési hiánypótlásán (3 oldal, 10 pont, a 6. pont oldalt vált) hibátlan. Szkennelt (kép) PDF-ből nincs szöveg → a felület ezt jelzi, a pontokat kézzel kell beírni.
+
+**Ügyfél-bemutató:** első belépéskor (és a fejléc „Súgó” gombjára) 4 lépéses ablak; a „látta” jelző a böngésző `localStorage`-ében van (`tour-<user id>`), másik eszközön újra megjelenik – ez elfogadott.
+
 ## 4a. Design elv: „A dosszié”
 
 A portál egy gondosan vezetett iratmappa – ebből következik minden vizuális döntés. Ha új képernyőt vagy
@@ -151,7 +161,9 @@ dokumentumkezelők, krémszínű szerkesztőségi ügyfélportálok.
 
 ## 5. Értesítések
 
-1. Bármi történik (új pont, ügyfél-feltöltés, megjegyzés, admin-válasz), a `private.queue_notify`
+**Az ügyfél SOHA nem kap automatikus levelet (2026-11-20 óta).** Csak akkor, ha az admin a projekt oldalán az „Értesítés küldése az ügyfélnek” gombra kattint (Edge Function `notify_client`, admin JWT). A levél a legutóbbi kézi küldés óta változott, az ügyfél által még nem látott pontokat foglalja össze, és mindkét címre (`notify_email`, `notify_email2`) megy. Ügyfél felé nincs automatikus újrapróbálás. Az admin felé menő automatikus összefoglaló az alábbiak szerint működik.
+
+1. Bármi történik (ügyfél-feltöltés, ügyfél-üzenet), a `private.queue_notify`
    beállítja a projekten a `client_notify_at` vagy `admin_notify_at` mezőt **most + 5 percre**, és a
    ponton az `*_unread` jelzőt. Minden újabb esemény kitolja az időpontot.
 2. A pg_cron percenként futtatja a `private.flush_notifications()`-t, ami az esedékes projektekre
@@ -283,6 +295,7 @@ az új projektbe nem kerülnek át maguktól.
 | `grep -oP` Windows Git Bash-ben | „supports only unibyte and UTF-8 locales” | `sed -n 's/…/\1/p'` (a GitHub Actions Linuxán a `-P` működik) |
 | RPC „megtagadás” tesztelése | Sikeres `rpc()` is `data: null`-t ad | Megtagadásnak csak a hiba vagy az üres tömb számít |
 | Új tábla az API-n | 42501 „permission denied” RLS policy mellett is | Kell explicit `grant … to authenticated` |
+| PowerShell `@(@('a', 'b' + "`n" + 'c'))` csere-listában | A vessző erősebb, mint a `+`: a pár 3 elemű tömb lesz, a csere csendben rossz | Egyenként `Edit`, vagy a szöveget előbb változóba |
 | `confirm()` / `alert()` a felületen | Automatizált böngészőt megakasztja | A `confirmBox()` / `modal()` segédet használd |
 | Új SQL-függvény a `public` sémában | Alapból **bárki** (névtelen is) hívhatja `/rpc`-n | A migráció végén: `revoke execute … from public, anon` + célzott `grant` |
 | Hibaüzenet nyitott `<dialog>` mellett | A modál a „top layer”-ben van, a `body`-ba tett toastot eltakarja | A `toast()` a nyitott dialogba szúr be – ezt a logikát tartsd meg |
