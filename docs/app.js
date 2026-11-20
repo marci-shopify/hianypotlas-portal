@@ -95,9 +95,8 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 // Hosszú pont (pl. a felszólításból beolvasott bekezdés): rövid cím + a teljes szöveg leírásként.
 const parsePoints = (text) => text.split("\n").map((l) => l.replace(/^\s*(\d+\s*[.)]|[-–•*])\s*/, "").trim()).filter(Boolean).map((t) => splitTitle(t));
 const ADVISOR = { name: "Nagy Henrietta", role: "vezető tanácsadó", photo: "img/henrietta.jpg" };
-const MOTTO = "Interaktív felület a pályázatok megvalósítási szakaszában";
 const advisor = (cls) => h("div", { class: "advisor " + (cls || "") },
-  h("img", { src: ADVISOR.photo, alt: ADVISOR.name, width: 40, height: 40 }),
+  h("img", { src: ADVISOR.photo, alt: ADVISOR.name, width: 96, height: 96 }),
   h("span", {}, h("b", {}, ADVISOR.name), h("small", {}, ADVISOR.role)));
 
 // A felszólítás PDF-jének beolvasása (a pdf.js csak most töltődik be, és csak adminnál).
@@ -266,9 +265,8 @@ const authShell = (formTitle, formSub, form, note) => h("div", { class: "auth" }
   h("aside", { class: "auth-art" },
     h("div", { class: "deco", "aria-hidden": "true" }, h("i"), h("i"), h("i")),
     h("div", { class: "brand light" }, mark(), brand),
-    h("p", { class: "motto" }, MOTTO),
     advisor("light"),
-    h("h1", {}, "A hiánypótlás ", h("em", {}, "rendben"), " lesz."),
+    h("h1", { class: "motto-h" }, h("em", {}, "Interaktív felület"), " a pályázatok megvalósítási szakaszában"),
     h("p", { class: "lead" }, "Pontról pontra látja, mi hiányzik még, mit kell javítani, és mi van már elfogadva."),
     h("ol", { class: "steps" },
       h("li", {}, "Belép a kapott felhasználónévvel és jelszóval"),
