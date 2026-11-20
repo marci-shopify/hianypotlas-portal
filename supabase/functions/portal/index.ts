@@ -39,12 +39,17 @@ Deno.serve(async (req) => {
     }
 
     const me = await caller(req);
-    if (me?.role !== "admin") return json({ error: "forbidden" }, 403);
+    if (!me) return json({ error: "forbidden" }, 403);
+    // Az egyetlen akció, amit ügyfél is hívhat: saját fájl törlése (a jogot az RLS dönti el, lásd deleteFile).
+    if (body.action === "delete_file") return json(await deleteFile(req, body.id));
+    if (me.role !== "admin") return json({ error: "forbidden" }, 403);
 
     switch (body.action) {
       case "create_client": return json(await createClientUser(body));
       case "update_client": return json(await updateClientUser(body));
       case "delete_client": return json(await deleteClientUser(body.id));
+      case "delete_project": return json(await deleteProject(body.id));
+      case "delete_point": return json(await deletePoint(body.id));
       case "test_email": {
         if (!me.notify_email) fail("Előbb adjon meg értesítési e-mail-címet.");
         await sendMail(null, [me.notify_email], "Próbalevél a hiánypótlás portálról",
@@ -112,24 +117,68 @@ async function updateClientUser(b: { id: string; name?: string; notify_email?: s
     if (b.password.length < 8) fail("A jelszó legalább 8 karakter legyen.");
     const { error } = await db.auth.admin.updateUserById(b.id, { password: b.password });
     if (error) fail(error.message);
+    // A régi jelszóval nyitott munkamenetek se éljenek tovább (a már kiadott token legfeljebb 1 óráig érvényes).
+    const { error: rErr } = await db.rpc("revoke_sessions", { p_user: b.id });
+    if (rErr) fail(rErr.message);
   }
   return { ok: true };
 }
 
+// ───────────────────────── Törlések ─────────────────────────
+// Sorrend MINDIG: előbb az adatbázis-sor (onnantól az RLS nem enged új feltöltést a mappába),
+// utána a Storage-mappa teljes ürítése előtag alapján – így árva fájl sem marad (pl. félbeszakadt feltöltés).
+
+async function purge(prefix: string) {
+  let removed = 0;
+  for (;;) {
+    const { data, error } = await db.rpc("storage_paths", { p_prefix: prefix });
+    if (error) fail(error.message);
+    const paths = (data ?? []) as string[];
+    if (!paths.length) return removed;
+    const { error: sErr } = await db.storage.from("docs").remove(paths);
+    if (sErr) fail(`A fájlok törlése nem sikerült: ${sErr.message}`);
+    removed += paths.length;
+  }
+}
+
 async function deleteClientUser(id: string) {
   await clientOnly(id);
-  // A Storage-fájlokat az API-n át kell törölni; a sorokat utána az auth.users → profiles kaszkád viszi.
-  const { data: files, error } = await db.from("files")
-    .select("path, points!inner(projects!inner(client_id))").eq("points.projects.client_id", id);
+  const { data: projects, error } = await db.from("projects").select("id").eq("client_id", id);
   if (error) fail(error.message);
-  const paths = (files ?? []).map((f) => f.path);
-  for (let i = 0; i < paths.length; i += 100) {
-    const { error: sErr } = await db.storage.from("docs").remove(paths.slice(i, i + 100));
-    if (sErr) fail(sErr.message);
-  }
-  const { error: dErr } = await db.auth.admin.deleteUser(id);
+  const { error: dErr } = await db.auth.admin.deleteUser(id);   // kaszkád: profil → projektek → pontok → sorok
   if (dErr) fail(dErr.message);
-  return { ok: true, files_removed: paths.length };
+  let files_removed = 0;
+  for (const p of projects ?? []) files_removed += await purge(`${p.id}/`);
+  return { ok: true, files_removed };
+}
+
+async function deleteProject(id: string) {
+  const { data, error } = await db.from("projects").delete().eq("id", id).select("id");
+  if (error) fail(error.message);
+  if (!data?.length) fail("Nincs ilyen projekt.");
+  return { ok: true, files_removed: await purge(`${id}/`) };
+}
+
+async function deletePoint(id: string) {
+  const { data, error } = await db.from("points").delete().eq("id", id).select("project_id");
+  if (error) fail(error.message);
+  if (!data?.length) fail("Nincs ilyen pont.");
+  return { ok: true, files_removed: await purge(`${data![0].project_id}/${id}/`) };
+}
+
+// A sort a HÍVÓ nevében töröljük (az ő JWT-jével), így pontosan az RLS `files_delete` szabálya dönt:
+// admin bármit, ügyfél csak a saját, még el nem fogadott ponthoz tartozó fájlját. A Storage-objektum csak ezután megy.
+async function deleteFile(req: Request, id: string) {
+  const asCaller = createClient(env("SUPABASE_URL"), env("SUPABASE_ANON_KEY"), {
+    global: { headers: { Authorization: req.headers.get("Authorization")! } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await asCaller.from("files").delete().eq("id", id).select("path");
+  if (error) fail(error.message);
+  if (!data?.length) fail("Ezt a fájlt már nem lehet törölni.");
+  const { error: sErr } = await db.storage.from("docs").remove([data![0].path]);
+  if (sErr) fail(`A fájl törlése nem sikerült: ${sErr.message}`);
+  return { ok: true };
 }
 
 // ───────────────────────── Értesítő e-mail ─────────────────────────
@@ -145,6 +194,7 @@ type Point = {
 
 async function notify(projectId: string, side: "client" | "admin") {
   const toClient = side === "client";
+  const stamp = new Date().toISOString();   // a lekérdezés ELŐTT: ami a küldés alatt érkezik, a következő levélbe kerül
   const { data: p, error } = await db.from("projects")
     .select(`id, title, reference, deadline, client_notified_at, admin_notified_at,
              client:profiles(name, notify_email),
@@ -210,10 +260,22 @@ ${msgs.map((m) => `<div style="font-size:15px;margin-top:6px;white-space:pre-lin
 ${toClient ? `<p style="font-size:13px;color:#777;font-family:Arial,sans-serif">A fájlokat és a választ a portálon tudja feltölteni, illetve megírni.</p>` : ""}
 </div>`;
 
-  await sendMail(p!.id, to, subject, text, html, toClient ? adminMails[0] : client.notify_email ?? undefined);
-  await db.from("projects")
-    .update(toClient ? { client_notified_at: new Date().toISOString() } : { admin_notified_at: new Date().toISOString() })
-    .eq("id", p!.id);
+  try {
+    await sendMail(p!.id, to, subject, text, html, toClient ? adminMails[0] : client.notify_email ?? undefined);
+  } catch (e) {
+    // Átmeneti hiba ne nyelje el az értesítést: 15 perc múlva újra, de legfeljebb 3 kudarcig 2 órán belül
+    // (tartós hibánál – rossz cím, rossz SMTP-jelszó – ne pörögjön örökké; a hibát a mail_log mutatja az adminnak).
+    const { count } = await db.from("mail_log").select("id", { count: "exact", head: true })
+      .eq("project_id", p!.id).not("error", "is", null).gt("created_at", new Date(Date.now() - 2 * 3600e3).toISOString());
+    if ((count ?? 0) < 3) {
+      const retryAt = new Date(Date.now() + 15 * 60e3).toISOString();
+      await db.from("projects").update(toClient ? { client_notify_at: retryAt } : { admin_notify_at: retryAt }).eq("id", p!.id);
+    }
+    throw e;
+  }
+  const { error: uErr } = await db.from("projects")
+    .update(toClient ? { client_notified_at: stamp } : { admin_notified_at: stamp }).eq("id", p!.id);
+  if (uErr) console.error("notified_at mentése nem sikerült:", uErr.message);
   return { sent: to.length };
 }
 
@@ -226,6 +288,7 @@ async function sendMail(projectId: string | null, to: string[], subject: string,
     const { data: s } = await db.from("settings").select("brand").single();
     const transport = nodemailer.createTransport({
       host: env("SMTP_HOST"), port, secure: port === 465 || port === 2465,
+      requireTLS: true,   // nem-465-ös porton se menjen titkosítatlanul
       auth: { user: env("SMTP_USER"), pass: env("SMTP_PASS") },
     });
     await transport.sendMail({

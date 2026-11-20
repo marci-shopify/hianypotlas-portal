@@ -30,6 +30,7 @@ Böngésző ── docs/ (statikus fájlok, GitHub Pages)
    ├─► Storage            privát `docs` bucket, policy-k az útvonal alapján
    └─► Edge Function `portal`
           ├─ ügyfél-fiók létrehozás / módosítás / törlés  (service role kell hozzá)
+          ├─ MINDEN törlés, ami fájlt érint (fájl, pont, projekt, ügyfél): sor + Storage együtt
           └─ értesítő e-mail küldése SMTP-n                (csak a pg_cron hívhatja)
 
 Postgres: pg_cron percenként ──► private.flush_notifications() ──pg_net──► Edge Function `notify`
@@ -91,7 +92,7 @@ private.config  (notify_url, notify_secret, keepalive_url – nem érhető el az
 |---|---|---|
 | Projektek, pontok | csak a sajátját **látja** | mindent lát, létrehoz, szerkeszt, töröl |
 | Státusz | nem állíthatja | `post_message(pont, szöveg, státusz)` |
-| Fájl | saját pontjához feltölt; a saját fájlját törli, amíg a pont nincs elfogadva | bármit |
+| Fájl | saját pontjához feltölt (pontonként max. 50 objektum); a saját fájlját törli, amíg a pont nincs elfogadva | bármit |
 | Megjegyzés | `post_message(pont, szöveg)` a saját pontjához | bárhova |
 | Profil | csak a saját `notify_email` mezőjét írhatja | ügyfeleket csak az Edge Functionön át |
 | Ügyfél-fiókok | – | Edge Function: `create_client`, `update_client`, `delete_client` |
@@ -103,6 +104,24 @@ trigger tölti ki – a kliens sosem mondhatja meg, kinek a nevében ír.
 mappából döntenek (`can_upload`, `owns_project`), ezért ezt a formát nem szabad megváltoztatni a
 policy-k nélkül. Az eredeti (ékezetes) fájlnevet a `files.name` őrzi. Letöltés mindig rövid életű
 aláírt URL-lel történik.
+
+**Fájlok életciklusa – három szabály, amit a séma kikényszerít:**
+
+1. *Fájlsor csak valódi feltöltésre.* A `files` sor beszúrásakor trigger ellenőrzi, hogy a `path`-on
+   létezik Storage-objektum; a méretet onnan veszi, a feltöltőt a munkamenetből. A kliens csak a
+   `point_id, path, name, size` mezőket küldheti.
+2. *A Storage-ban a böngésző csak beszúrni és olvasni tud.* Nincs `update` és nincs `delete` policy,
+   ezért feltöltött fájlt nem lehet felülírni, átnevezni vagy csendben kicserélni.
+3. *Törölni csak az Edge Function töröl* (`delete_file`, `delete_point`, `delete_project`,
+   `delete_client`), mindig ebben a sorrendben: előbb az adatbázis-sor (onnantól az RLS nem enged új
+   feltöltést abba a mappába), utána a mappa ürítése **előtag alapján** (`storage_paths`), így a
+   félbeszakadt feltöltések árva objektumai is eltűnnek. A `delete_file` a hívó saját JWT-jével törli a
+   sort, tehát ugyanaz az RLS-szabály dönt, mint bárhol máshol.
+
+**Munkamenet:** a belépési token `sessionStorage`-ben él (fülhöz kötött). Oldalfrissítést túlél, új
+fülön vagy a fül bezárása után újra be kell lépni. Ennek oka a 10. pont első tétele; ne írd át
+`localStorage`-re. Az admin által adott új jelszó a felhasználó minden korábbi munkamenetét megszünteti
+(`revoke_sessions`); a már kiadott hozzáférési token legfeljebb 1 óráig még érvényes.
 
 ## 5. Értesítések
 
@@ -126,7 +145,19 @@ Bármilyen SMTP-fiók jó (a vállalkozás saját postafiókja, Gmail alkalmazá
 A Supabase Edge Function a 25-ös és 587-es portot tiltja: **465-öt** (vagy a szolgáltató alternatív
 portját, pl. 2465) kell használni. Ellenőrzés: Beállítások → „Próbalevél küldése magamnak”.
 
-<!-- EMAIL-STATUS -->
+**Jelenlegi állapot (kimérve 2026-11-20):** a küldés a Resend SMTP-jén megy (`smtp.resend.com:465`,
+feladó `onboarding@resend.dev`), és végponttól végpontig működik – a `test:live` valódi levelet küld,
+a Resend naplója szerint kézbesítve. **De:** amíg a Resend-fiókhoz nincs saját, hitelesített domain,
+a Resend **csak a fiók tulajdonosának címére** kézbesít; más címzettnél a küldés hibával tér vissza
+(ez megjelenik a `mail_log`-ban és a piros sávban). Valódi ügyfeleknek tehát akkor megy levél, ha
+(a) a Resendben felvesznek egy domaint (Domains → Add domain, DNS-rekordok a domain szolgáltatójánál),
+és a `MAIL_FROM` erre a domainre mutat (pl. `ertesites@sajatdomain.hu`), vagy (b) a `.env` SMTP-adatait
+a vállalkozás saját postafiókjára cserélik. Utána `node scripts/setup.mjs` és egy próbalevél.
+
+**Hibakezelés:** ha a küldés elbukik, a function 15 perc múlva újrapróbálja, de projektenként legfeljebb
+3 kudarcig 2 órán belül (tartós hibánál – rossz cím, rossz jelszó – ne pörögjön). Ha nincs címzett
+(az ügyfél még nem adott meg e-mailt), nem történik küldés és naplóbejegyzés sem; az admin ezt a projekt
+oldalán látja figyelmeztetésként, a saját hiányzó címére pedig a projektlista tetején kap sávot.
 
 ## 6. Parancsok
 
@@ -209,9 +240,22 @@ az új projektbe nem kerülnek át maguktól.
 | RPC „megtagadás” tesztelése | Sikeres `rpc()` is `data: null`-t ad | Megtagadásnak csak a hiba vagy az üres tömb számít |
 | Új tábla az API-n | 42501 „permission denied” RLS policy mellett is | Kell explicit `grant … to authenticated` |
 | `confirm()` / `alert()` a felületen | Automatizált böngészőt megakasztja | A `confirmBox()` / `modal()` segédet használd |
+| Új SQL-függvény a `public` sémában | Alapból **bárki** (névtelen is) hívhatja `/rpc`-n | A migráció végén: `revoke execute … from public, anon` + célzott `grant` |
+| Hibaüzenet nyitott `<dialog>` mellett | A modál a „top layer”-ben van, a `body`-ba tett toastot eltakarja | A `toast()` a nyitott dialogba szúr be – ezt a logikát tartsd meg |
+| Toast láthatóságának tesztelése | `elementFromPoint` átugorja (`pointer-events: none`) | Azt ellenőrizd, hogy a nyitott dialog gyereke és a képernyőn van |
+| `deno check` hibával tér vissza | A `functions deploy` ettől még feltölti a kódot | A típusellenőrzést külön futtasd és nézd meg, mielőtt telepítesz |
+| Storage `remove()` jogosultság nélkül | 200-at ad üres listával, hibát nem | Törlés után ellenőrizd, hogy az objektum tényleg eltűnt-e |
+| Resend API-kulcs listázásra | 401 „restricted to only send emails” (a kulcs csak küldésre jó) | A kézbesítést a Resend felületén (Emails) nézd meg |
 
 ## 10. Ismert korlátok
 
+- **Közös webes eredet – ÉLES HASZNÁLAT ELŐTT MEGOLDANDÓ.** A portál a `marci-shopify.github.io`
+  eredeten fut, amin ugyanennek a GitHub-fióknak más Pages-oldalai is osztoznak (2026-11-20-án három
+  ilyen volt). A böngésző tárolói eredetenként közösek, tehát ha azok bármelyikén
+  hibás vagy rosszindulatú script fut, az megnyithatja a portált és a belépett felhasználó nevében
+  dolgozhat. Enyhítés már van (a token fülhöz kötött `sessionStorage`-ben él, lásd 4. pont), de a
+  tényleges megoldás a **saját domain** (8. pont, „Saját domain”) – attól a portál külön eredetet kap.
+- **E-mail csak a Resend-fiók tulajdonosának megy**, amíg nincs hitelesített domain (5. pont).
 - **Ingyenes Supabase csomag:** fájlonként 50 MB, összesen 1 GB tárhely, 500 MB adatbázis. Ha betelik,
   a feltöltés hibát ad; megoldás az archivált projektek törlése vagy a fizetős csomag.
 - **Leállás tétlenség miatt:** az ingyenes projekt 7 nap API-forgalom nélkül szünetel. Két védvonal van:
@@ -224,7 +268,26 @@ az új projektbe nem kerülnek át maguktól.
 - **A repó nyilvános** (az ingyenes GitHub Pages feltétele). Titok, ügyféladat, valódi név vagy
   e-mail-cím soha ne kerüljön commitba.
 
-## 11. Amit soha
+## 11. Független átnézés (2026-11-20) – mi lett vele
+
+Egy friss kontextusú átnéző végigpróbálta a rendszert. Ügyfelek közötti adatszivárgást, jogosultság-
+emelést vagy szerző-hamisítást nem talált. Amit talált, és ami lett vele:
+
+| Megállapítás | Állapot |
+|---|---|
+| Közös webes eredet más Pages-oldalakkal | Enyhítve (`sessionStorage`); végleges megoldás: saját domain – **nyitott** |
+| Elveszthető / csendben kimaradó értesítés | Javítva: korlátos újrapróbálás, admin-sáv hiányzó címnél, őszinte visszajelzés |
+| Törlés után bennmaradó fájlok | Javítva: szerveroldali törlés előtag alapján; élő teszt ellenőrzi |
+| Feltöltés nélküli fájlsor, hamis méret/dátum, csendes tartalomcsere | Javítva (trigger + oszlopszintű grant + nincs Storage update/delete policy) |
+| Tárhely kimerítése egy ügyfél által | Enyhítve: pontonként 50 objektum. Egy rosszhiszemű ügyfél így is megtöltheti az 1 GB-ot – **elfogadott kockázat** |
+| Gyenge tesztek (bármilyen hiba „megtagadásnak” számított) | Javítva: csak jogosultsági hiba vagy üres találat számít; új esetek |
+| Előnézet a feltöltő által megadott tartalomtípussal | Javítva: a típust a kiterjesztésből mi adjuk, blob-URL, `opener = null` |
+| Jelszócsere után élő régi munkamenet | Javítva és élőben kimérve (`revoke_sessions`) |
+| Hibaüzenet a modál mögött, Esc a jelszó-ablakon, dupla projekt | Javítva |
+| A portálon már olvasott üzenet újra megjelenhet a következő összefoglalóban | **Nyitott**, alacsony súlyú |
+| Nincs kétlépcsős belépés, a jelszó minimum 8 karakter | **Nyitott**: az admin válasszon hosszú jelszót; a Supabase Auth korlátozza a próbálkozások számát |
+
+## 12. Amit soha
 
 - Ne kapcsold ki az RLS-t, és ne adj `anon`-nak jogot a `settings` tábla olvasásán kívül semmire.
 - Ne írj a felületre `innerHTML`-t felhasználói szöveggel; a `h()` segéd szövegként szúr be mindent.

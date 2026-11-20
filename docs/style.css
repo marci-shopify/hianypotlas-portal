@@ -127,7 +127,7 @@ dialog { width: min(520px, calc(100vw - 2rem)); border: 1.5px solid var(--ink); 
 dialog::backdrop { background: rgba(27, 36, 48, .45); }
 dialog h2 { margin-bottom: 1rem; }
 dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #fff; border: 1px solid var(--line); border-radius: 4px; padding: .8rem; font: .875rem/1.5 ui-monospace, Consolas, monospace; }
-#toasts { position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%); display: grid; gap: .5rem; z-index: 99; width: min(480px, calc(100vw - 2rem)); pointer-events: none; }
+.toasts { position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%); display: grid; gap: .5rem; z-index: 99; width: min(480px, calc(100vw - 2rem)); pointer-events: none; }
 .toast { background: var(--ink); color: #fff; padding: .7rem 1rem; border-radius: 4px; font-size: .9375rem; box-shadow: 0 4px 16px rgba(0, 0, 0, .2); }
 .toast.err { background: var(--javitando); }
 .banner { padding: .7rem 1rem; border: 1.5px solid var(--javitando); color: var(--javitando); border-radius: 4px; margin-bottom: 1rem; font-size: .9375rem; }

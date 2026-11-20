@@ -3,7 +3,9 @@
    XSS-védelem: minden DOM a h() segéddel épül, felhasználói szöveg csak text node-ként kerül ki. */
 
 const cfg = window.PORTAL_CONFIG;
-const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
+// A munkamenet sessionStorage-ben él (fülhöz kötött): a *.github.io eredeten osztozó más oldalak
+// így nem érik el a belépési tokent. Ára: új fülön / a fül bezárása után újra be kell lépni.
+const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, { auth: { storage: window.sessionStorage } });
 const app = document.getElementById("app");
 const MAX_FILE = 50 * 1024 * 1024; // a Storage bucket limitje is ennyi
 
@@ -31,7 +33,8 @@ function h(tag, attrs, ...kids) {
 
 function toast(text, isError) {
   const t = h("div", { class: "toast" + (isError ? " err" : "") }, text);
-  document.getElementById("toasts").append(t);
+  const host = [...document.querySelectorAll("dialog[open]")].pop() || document.body;
+  (host.querySelector(":scope > .toasts") || host.appendChild(h("div", { class: "toasts", role: "status", "aria-live": "polite" }))).append(t);
   setTimeout(() => t.remove(), isError ? 7000 : 3500);
 }
 
@@ -105,11 +108,15 @@ function progressText(points) {
 }
 
 // Párbeszédablak a natív <dialog>-gal. A build() megkapja a bezáró függvényt.
-function modal(title, build) {
+function modal(title, build, lockEscape) {
   const d = h("dialog", {});
-  const close = () => { d.close(); d.remove(); };
+  const close = () => {
+    const left = d.querySelector(":scope > .toasts");
+    d.close(); d.remove();
+    if (left?.children.length) [...left.children].forEach((t) => toast(t.textContent, t.classList.contains("err")));
+  };
   d.append(h("h2", {}, title), ...[build(close)].flat());
-  d.addEventListener("cancel", () => setTimeout(() => d.remove()));
+  d.addEventListener("cancel", (ev) => { ev.preventDefault(); if (!lockEscape) close(); });
   document.body.append(d);
   d.showModal();
   return close;
@@ -276,6 +283,7 @@ async function homeView() {
       admin && h("div", { class: "row" },
         h("button", { class: "btn quiet", onclick: () => { sessionStorage.setItem("archived", showArchived ? "0" : "1"); render(); } }, showArchived ? "Aktívak" : "Archiváltak"),
         h("button", { class: "btn primary", onclick: () => newProjectDialog() }, "+ Új projekt"))),
+    admin && !me.notify_email && h("div", { class: "banner" }, "Még nincs megadva az Ön értesítési e-mail-címe, ezért nem kap levelet, ha egy ügyfél feltölt vagy ír. ", h("a", { href: "#/beallitasok" }, "Megadom most")),
     failedMail && h("div", { class: "banner" }, `A legutóbbi értesítő e-mail kiküldése nem sikerült (${fmtTime(failedMail.created_at)}, ${failedMail.recipients}): ${failedMail.error} `, h("a", { href: "#/beallitasok" }, "Részletek")),
     shown.length ? h("ul", { class: "list" }, shown.map((p) => h("li", {}, h("a", { class: "proj", href: `#/p/${p.id}` },
       h("div", {},
@@ -306,7 +314,10 @@ async function newProjectDialog(presetClientId) {
       client_id: v.client_id, title: v.title.trim(), reference: v.reference.trim() || null, deadline: v.deadline || null,
     }).select("id").single());
     const pts = parsePoints(v.points);
-    if (pts.length) need(await sb.from("points").insert(pts.map((title, i) => ({ project_id: proj.id, position: i + 1, title }))));
+    if (pts.length) {
+      const { error } = await sb.from("points").insert(pts.map((title, i) => ({ project_id: proj.id, position: i + 1, title })));
+      if (error) toast(`A projekt létrejött, de a pontok mentése nem sikerült (${explain(error)}). A „Pontok hozzáadása” gombbal pótolhatók.`, true);
+    }
     location.hash = `#/p/${proj.id}`;
   });
 }
@@ -321,7 +332,11 @@ async function projectView(id) {
   const points = project.points.sort(byPos);
 
   // Az „Új” jelzőt ebben a megjelenítésben még mutatjuk, a szerveren viszont már töröljük.
-  if (points.some((p) => (admin ? p.admin_unread : p.client_unread))) sb.rpc("mark_seen", { p_project: id }).then(() => {});
+  // Csak a most betöltött állapotig jelölünk: ami a lekérdezés után változott, annak megmarad a jelzője és a levele.
+  if (points.some((p) => (admin ? p.admin_unread : p.client_unread))) {
+    const before = points.map((p) => p.updated_at).sort().pop();
+    sb.rpc("mark_seen", { p_project: id, p_before: before }).then(({ error }) => error && console.error(error));
+  }
 
   const files = points.flatMap((p) => p.files);
   return [
@@ -363,7 +378,9 @@ function pointCard(project, p, no) {
     need(await sb.rpc("post_message", { p_point: p.id, p_body: body || null, p_status: status }));
     drafts.delete(p.id);
     if (status === "elfogadva") openState.delete(p.id);
-    toast(admin ? "Elküldve. Az ügyfél néhány percen belül e-mailt kap róla." : "Elküldve.");
+    toast(!admin ? "Elküldve."
+      : project.client.notify_email ? "Elküldve. Az ügyfél kb. 5 perc múlva összefoglaló e-mailt kap (ha addig nem nézi meg a portálon)."
+      : "Elküldve. Az ügyfélnek még nincs e-mail-címe, ezért levelet nem kap – a portálon látni fogja.");
     refresh();
   });
 
@@ -437,31 +454,29 @@ async function upload(project, point, fileList, statusEl) {
   refresh();
 }
 
-const signedUrl = async (f, download) =>
-  need(await sb.storage.from("docs").createSignedUrl(f.path, 120, download ? { download: f.name } : undefined)).signedUrl;
+const signedUrl = async (f) =>
+  need(await sb.storage.from("docs").createSignedUrl(f.path, 120, { download: f.name })).signedUrl;
 
 // PDF/kép új lapon nyílik (gyors átnézés), minden más letöltődik.
+// Az előnézet típusát a kiterjesztésből MI adjuk meg (nem a feltöltő által küldött Content-Type-ból),
+// így egy .pdf-nek álcázott HTML/SVG legfeljebb hibás PDF-ként jelenik meg, kódként nem fut le.
+const PREVIEW = { pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
 async function openFile(f, forceDownload) {
-  const inline = !forceDownload && /\.(pdf|png|jpe?g|gif|webp)$/i.test(f.name);
-  const tab = inline ? window.open("", "_blank") : null;   // a kattintással szinkron kell nyitni
+  const type = !forceDownload && PREVIEW[f.name.split(".").pop().toLowerCase()];
+  const tab = type ? window.open("", "_blank") : null;   // a kattintással szinkron kell nyitni
+  if (tab) tab.opener = null;                            // az új lap ne érje el a portál ablakát
   try {
-    const url = await signedUrl(f, !inline);
-    if (tab) tab.location = url; else location.assign(url);
+    if (!tab) return location.assign(await signedUrl(f));
+    const blob = need(await sb.storage.from("docs").download(f.path));
+    const url = URL.createObjectURL(new Blob([blob], { type }));
+    tab.location = url;
+    setTimeout(() => URL.revokeObjectURL(url), 10 * 60000);
   } catch (e) { tab?.close(); toast(explain(e), true); }
 }
 
 async function deleteFile(f) {
   if (!(await confirmBox(`Törli ezt a fájlt? „${f.name}”`))) return;
-  run(null, async () => {
-    const gone = need(await sb.from("files").delete().eq("id", f.id).select("id"));
-    if (!gone.length) throw new Error("Ezt a fájlt már nem lehet törölni.");
-    await sb.storage.from("docs").remove([f.path]);
-    refresh();
-  });
-}
-
-async function removeStored(files) {
-  for (let i = 0; i < files.length; i += 100) need(await sb.storage.from("docs").remove(files.slice(i, i + 100).map((f) => f.path)));
+  run(null, async () => { await api("delete_file", { id: f.id }); refresh(); });
 }
 
 async function downloadZip(project, points) {
@@ -523,12 +538,12 @@ function editPointDialog(p) {
 
 async function deletePoint(p) {
   if (!(await confirmBox(`Törli a(z) „${p.title}” pontot a feltöltött fájlokkal és megjegyzésekkel együtt? Ez nem vonható vissza.`))) return;
-  run(null, async () => { await removeStored(p.files); need(await sb.from("points").delete().eq("id", p.id)); refresh(); });
+  run(null, async () => { await api("delete_point", { id: p.id }); refresh(); });
 }
 
 async function deleteProject(project, files) {
   if (!(await confirmBox(`Törli a(z) „${project.title}” projektet minden ponttal, fájllal (${files.length} db) és megjegyzéssel együtt? Ez nem vonható vissza.`))) return;
-  run(null, async () => { await removeStored(files); need(await sb.from("projects").delete().eq("id", project.id)); location.hash = "#/"; });
+  run(null, async () => { await api("delete_project", { id: project.id }); toast("Projekt törölve."); location.hash = "#/"; });
 }
 
 // ───────────────────────── admin: ügyfelek ─────────────────────────
@@ -590,7 +605,7 @@ function credentialsDialog(name, username, password, then) {
     h("div", { class: "row end" },
       h("button", { class: "btn", onclick: (ev) => run(ev.target, async () => { await navigator.clipboard.writeText(text); toast("Vágólapra másolva."); }) }, "Szöveg másolása"),
       h("button", { class: "btn primary", onclick: () => { close(); then(); } }, "Kész")),
-  ]);
+  ], true);
 }
 
 async function deleteClient(c) {
