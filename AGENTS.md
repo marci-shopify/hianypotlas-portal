@@ -1,4 +1,4 @@
-# Hiánypótlás portál – tudnivalók az agentnek
+# Pályázatsegítő (hiánypótlás portál) – tudnivalók az agentnek
 
 Ez a fájl mindent tartalmaz, ami a rendszer megértéséhez, módosításához és üzemeltetéséhez kell.
 Olvasd végig, mielőtt bármihez hozzányúlsz. Ha valamit kimérsz vagy megváltoztatsz, **ugyanabban a
@@ -18,7 +18,9 @@ jelszóval belép, pontonként feltölti a dokumentumokat, megjegyzést ír, és
 | Backend | Supabase projekt `ubuslaqntdnqscsaisqr` (régió: eu-west-1, ingyenes csomag) |
 | Irányítópult | https://supabase.com/dashboard/project/ubuslaqntdnqscsaisqr |
 
-A felület nyelve magyar, az ügyfeleket magázza. Új szöveget is így írj.
+A termék neve a felületen **Pályázatsegítő** (a `settings.brand` mezőből jön, az admin átírhatja); a repó
+és a Supabase projekt neve történeti okból `hianypotlas-portal` maradt. A felület nyelve magyar, az
+ügyfeleket magázza. Új szöveget is így írj.
 
 ## 2. Felépítés
 
@@ -30,6 +32,7 @@ Böngésző ── docs/ (statikus fájlok, GitHub Pages)
    ├─► Storage            privát `docs` bucket, policy-k az útvonal alapján
    └─► Edge Function `portal`
           ├─ ügyfél-fiók létrehozás / módosítás / törlés  (service role kell hozzá)
+          ├─ belépési adatok e-mailben az ügyfélnek         (az admin által látott/szerkesztett szöveg)
           ├─ MINDEN törlés, ami fájlt érint (fájl, pont, projekt, ügyfél): sor + Storage együtt
           └─ értesítő e-mail küldése SMTP-n                (csak a pg_cron hívhatja)
 
@@ -47,7 +50,8 @@ funkciót építesz, először a szabályt írd meg SQL-ben és tedd tesztbe, cs
 
 | Fájl | Mi van benne |
 |---|---|
-| `docs/index.html`, `style.css` | Váz és kinézet. Csak rendszerbetűk, külső kérés nincs. |
+| `docs/index.html`, `style.css` | Váz és kinézet. A design elvét lásd a 4a. pontban; külső kérés nincs. |
+| `docs/fonts/` | Fraunces + Instrument Sans (változó súlyú woff2, latin + latin-ext), az npm `@fontsource-variable` csomagokból bemásolva, licencfájlokkal. |
 | `docs/app.js` | A teljes felület (belépés, projektlista, projekt nézet, ügyfelek, beállítások). |
 | `docs/config.js` | Supabase URL + nyilvános kulcs + `authDomain`. A `scripts/setup.mjs` tölti ki. |
 | `docs/vendor/` | `supabase.js` és `jszip.min.js` bemásolva az npm-csomagból (nincs CDN-függés). |
@@ -95,7 +99,7 @@ private.config  (notify_url, notify_secret, keepalive_url – nem érhető el az
 | Fájl | saját pontjához feltölt (pontonként max. 50 objektum); a saját fájlját törli, amíg a pont nincs elfogadva | bármit |
 | Megjegyzés | `post_message(pont, szöveg)` a saját pontjához | bárhova |
 | Profil | csak a saját `notify_email` mezőjét írhatja | ügyfeleket csak az Edge Functionön át |
-| Ügyfél-fiókok | – | Edge Function: `create_client`, `update_client`, `delete_client` |
+| Ügyfél-fiókok | – | Edge Function: `create_client`, `update_client`, `delete_client`, `send_credentials` |
 
 Üzenetet **csak** a `post_message` RPC tud beszúrni, fájlnál az `uploaded_by` és `from_admin` mezőt
 trigger tölti ki – a kliens sosem mondhatja meg, kinek a nevében ír.
@@ -123,6 +127,27 @@ fülön vagy a fül bezárása után újra be kell lépni. Ennek oka a 10. pont 
 `localStorage`-re. Az admin által adott új jelszó a felhasználó minden korábbi munkamenetét megszünteti
 (`revoke_sessions`); a már kiadott hozzáférési token legfeljebb 1 óráig még érvényes.
 
+## 4a. Design elv: „A dosszié”
+
+A portál egy gondosan vezetett iratmappa – ebből következik minden vizuális döntés. Ha új képernyőt vagy
+elemet építesz, ehhez igazítsd, ne vezess be új motívumot.
+
+- **Metafora:** minden projekt egy *füles mappa* (`.folder`: a fülön az ügyfél neve), minden hiánypótlási
+  pont egy *lap* a mappában (`.point`), a projekt oldal teteje a mappa *borítója* (`.hero`).
+- **Paletta:** mélyzöld `--forest`, elefántcsont `--bg`, menta `--mint`, kevés sárgaréz `--brass`
+  (számok, fókusz). **Színt csak a státusz kap** (`--hianyzik/--feltoltve/--javitando/--elfogadva`);
+  dekorációra ne használj új színt. A státusz mindig szöveggel is ki van írva, nem csak színnel.
+- **Betűk:** Fraunces a címekhez és számokhoz (a *dőlt* a kiemelés: sorszámok, a belépő „rendben” szava),
+  Instrument Sans minden máshoz. Saját tárhelyről (`docs/fonts`), külső betűszolgáltató nincs.
+- **Formák:** lekerekített kártyák (16–22 px), pirula alakú gombok, hajszálvonalak, puha árnyék csak a
+  nyitott lapon és a mappákon. Felkiáltó elemek (nagybetűs címkék, színátmenetes gombok) nincsenek.
+- **Kötelező ellenőrzés minden felület-változtatásnál:** 1280×720, 1366×768, 1536×864 és 390×844 méretben
+  ne legyen vízszintes görgetés, és a párbeszédablakok elsődleges gombja görgetés nélkül látsszon (a
+  `dialog .actions` gombsor ezért ragad az ablak aljára).
+
+Inspiráció (2026-11-20, Pinterest): zöld–krém „interface essentials” paletták, füles mappás
+dokumentumkezelők, krémszínű szerkesztőségi ügyfélportálok.
+
 ## 5. Értesítések
 
 1. Bármi történik (új pont, ügyfél-feltöltés, megjegyzés, admin-válasz), a `private.queue_notify`
@@ -138,6 +163,12 @@ fülön vagy a fül bezárása után újra be kell lépni. Ennek oka a 10. pont 
 Így egy átnézés (pl. 6 pont elfogadva, 2 javítandó) egyetlen levél, nem nyolc. Az ügyfél a
 `profiles.notify_email` címre kap levelet (első belépéskor kötelező megadnia), az admin oldali
 összefoglaló minden admin `notify_email` címére megy.
+
+**Belépési adatok kiküldése.** Ügyfél létrehozása vagy jelszócsere után a „Belépési adatok” ablak megmutatja
+a levelet (szerkeszthető), és az „E-mail küldése” gomb az Edge Function `send_credentials` akcióján át
+azonnal elküldi a megadott címre. A jelszót csak az admin böngészője ismeri; a szerver a levél szövegét
+továbbítja, de **nem naplózza** (a `mail_log`-ba csak a címzett és a tárgy kerül). Ha az ügyfélnek még nem
+volt értesítési címe, a megadott cím lesz az.
 
 **SMTP beállítása** – a function ezeket a secreteket olvassa: `SMTP_HOST`, `SMTP_PORT` (alap: 465),
 `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM`. Írd be őket a `.env`-be, majd `node scripts/setup.mjs`.

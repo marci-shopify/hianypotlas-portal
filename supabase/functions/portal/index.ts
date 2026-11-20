@@ -1,4 +1,4 @@
-// Hiánypótlás portál – az egyetlen Edge Function. Két dolgot csinál, amit a böngésző nem tehet meg:
+// Pályázatsegítő (hiánypótlás portál) – az egyetlen Edge Function. Két dolgot csinál, amit a böngésző nem tehet meg:
 //   1) ügyfél-fiókok kezelése (service role kell hozzá)  → csak admin JWT-vel hívható
 //   2) összefoglaló értesítő e-mail kiküldése SMTP-n     → csak a pg_cron hívja, titkos fejléccel
 // Telepítés: npx supabase functions deploy portal --no-verify-jwt   (a jogosultságot itt ellenőrizzük)
@@ -50,9 +50,10 @@ Deno.serve(async (req) => {
       case "delete_client": return json(await deleteClientUser(body.id));
       case "delete_project": return json(await deleteProject(body.id));
       case "delete_point": return json(await deletePoint(body.id));
+      case "send_credentials": return json(await sendCredentials(body, me.notify_email));
       case "test_email": {
         if (!me.notify_email) fail("Előbb adjon meg értesítési e-mail-címet.");
-        await sendMail(null, [me.notify_email], "Próbalevél a hiánypótlás portálról",
+        await sendMail(null, [me.notify_email], "Próbalevél",
           "Ez egy próbalevél. Ha megkapta, az értesítések kiküldése működik.");
         return json({ ok: true });
       }
@@ -121,6 +122,21 @@ async function updateClientUser(b: { id: string; name?: string; notify_email?: s
     const { error: rErr } = await db.rpc("revoke_sessions", { p_user: b.id });
     if (rErr) fail(rErr.message);
   }
+  return { ok: true };
+}
+
+// A belépési adatok elküldése az ügyfélnek. A szöveget az admin a felületen látja és szerkeszti (benne a jelszó,
+// amit csak az ő böngészője ismer); mi csak továbbítjuk. A levél tartalmát NEM naplózzuk, csak a címzettet és a tárgyat.
+async function sendCredentials(b: { id: string; to?: string; text?: string }, replyTo: string | null) {
+  await clientOnly(b.id);
+  const to = (b.to ?? "").trim();
+  const text = (b.text ?? "").trim();
+  if (!/^[^@s]+@[^@s]+.[^@s]+$/.test(to)) fail("Érvénytelen e-mail-cím.");
+  if (!text || text.length > 5000) fail("A levél szövege üres vagy túl hosszú.");
+  const html = `<div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#14251f;line-height:1.55;white-space:pre-line">${esc(text)}</div>`;
+  await sendMail(null, [to], "Belépési adatok a hiánypótláshoz", text, html, replyTo ?? undefined);
+  // Ha az ügyfélnek még nincs értesítési címe, ez lesz az (így az első belépéskor már nem kell megadnia).
+  await db.from("profiles").update({ notify_email: to }).eq("id", b.id).is("notify_email", null);
   return { ok: true };
 }
 
@@ -247,8 +263,8 @@ async function notify(projectId: string, side: "client" | "admin") {
     `Megnyitás a portálon: ${link}`,
   ].filter((l, i, a) => !(l === "" && a[i - 1] === "")).join("\n");
 
-  const color: Record<string, string> = { hianyzik: "#7a7466", feltoltve: "#2456a6", javitando: "#b8400c", elfogadva: "#2a7548" };
-  const html = `<div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#1b2430;line-height:1.5">
+  const color: Record<string, string> = { hianyzik: "#827e6e", feltoltve: "#2d5d8c", javitando: "#b3472a", elfogadva: "#1e6a49" };
+  const html = `<div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#14251f;line-height:1.55">
 <p style="white-space:pre-line">${esc(intro)}</p>
 ${deadline ? `<p style="margin:0 0 16px"><strong>${esc(deadline)}</strong></p>` : ""}
 ${items.map(({ pt, msgs, files }) => `<div style="border-left:3px solid ${color[pt.status]};padding:6px 0 6px 14px;margin:0 0 14px">
@@ -256,7 +272,7 @@ ${items.map(({ pt, msgs, files }) => `<div style="border-left:3px solid ${color[
 ${files.length ? `<div style="font-size:14px;color:#555">Új fájl: ${esc(files.map((f) => f.name).join(", "))}</div>` : ""}
 ${msgs.map((m) => `<div style="font-size:15px;margin-top:6px;white-space:pre-line">${esc(m.body)}</div>`).join("")}
 </div>`).join("")}
-<p style="margin:24px 0"><a href="${esc(link)}" style="background:#1b2430;color:#fff;padding:11px 20px;text-decoration:none;border-radius:4px;font-family:Arial,sans-serif;font-size:15px">Megnyitás a portálon</a></p>
+<p style="margin:24px 0"><a href="${esc(link)}" style="background:#15382c;color:#f6f3ea;padding:12px 24px;text-decoration:none;border-radius:999px;font-family:Arial,sans-serif;font-size:15px;font-weight:bold">Megnyitás a portálon</a></p>
 ${toClient ? `<p style="font-size:13px;color:#777;font-family:Arial,sans-serif">A fájlokat és a választ a portálon tudja feltölteni, illetve megírni.</p>` : ""}
 </div>`;
 
@@ -292,7 +308,7 @@ async function sendMail(projectId: string | null, to: string[], subject: string,
       auth: { user: env("SMTP_USER"), pass: env("SMTP_PASS") },
     });
     await transport.sendMail({
-      from: { name: s?.brand ?? "Hiánypótlás portál", address: env("MAIL_FROM") },
+      from: { name: s?.brand ?? "Pályázatsegítő", address: env("MAIL_FROM") },
       to, replyTo, subject, text, html,
     });
   } catch (e) {

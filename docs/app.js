@@ -1,17 +1,16 @@
-/* Hiánypótlás portál – egyoldalas alkalmazás, build-lépés nélkül.
+/* Pályázatsegítő – egyoldalas alkalmazás, build-lépés nélkül.
    Adat: Supabase (táblák RLS-sel + Storage + egy Edge Function). Részletek: AGENTS.md
    XSS-védelem: minden DOM a h() segéddel épül, felhasználói szöveg csak text node-ként kerül ki. */
 
 const cfg = window.PORTAL_CONFIG;
-// A munkamenet sessionStorage-ben él (fülhöz kötött): a *.github.io eredeten osztozó más oldalak
-// így nem érik el a belépési tokent. Ára: új fülön / a fül bezárása után újra be kell lépni.
+// A munkamenet sessionStorage-ben él (fülhöz kötött): új fülön / a fül bezárása után újra be kell lépni.
 const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, { auth: { storage: window.sessionStorage } });
 const app = document.getElementById("app");
 const MAX_FILE = 50 * 1024 * 1024; // a Storage bucket limitje is ennyi
 
 const STATUS = { hianyzik: "Hiányzik", feltoltve: "Ellenőrzésre vár", javitando: "Javítandó", elfogadva: "Rendben" };
 let me = null;                       // a belépett felhasználó profilja
-let brand = "Hiánypótlás portál";
+let brand = "Pályázatsegítő";
 let renderNo = 0;                    // versenyhelyzet ellen: csak a legutolsó render írhat a DOM-ba
 const openState = new Map();         // pont id → nyitva van-e (újrarajzolás után megmarad)
 const drafts = new Map();            // pont id → félbehagyott megjegyzés
@@ -31,6 +30,7 @@ function h(tag, attrs, ...kids) {
   return el;
 }
 
+// Nyitott <dialog> esetén abba kerül (a modál a „top layer”-ben van, különben eltakarná).
 function toast(text, isError) {
   const t = h("div", { class: "toast" + (isError ? " err" : "") }, text);
   const host = [...document.querySelectorAll("dialog[open]")].pop() || document.body;
@@ -77,14 +77,17 @@ const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.m
 const daysLeft = (d) => Math.round((new Date(d + "T00:00:00") - new Date(new Date().toDateString())) / 86400000);
 const byPos = (a, b) => a.position - b.position || a.id.localeCompare(b.id);
 const byTime = (a, b) => a.created_at.localeCompare(b.created_at);
+const noAccents = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "");
 // Storage-kulcsba csak ASCII mehet; az eredeti nevet a files.name őrzi.
-const asciiName = (n) => n.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9._-]+/g, "_").slice(-80) || "fajl";
+const asciiName = (n) => noAccents(n).replace(/[^A-Za-z0-9._-]+/g, "_").slice(-80) || "fajl";
 const genPassword = () => {
   const abc = "abcdefghjkmnpqrstuvwxyz23456789"; // félreolvasható karakterek nélkül
   const r = crypto.getRandomValues(new Uint32Array(12));
   return [...r].map((x, i) => (i && i % 4 === 0 ? "-" : "") + abc[x % abc.length]).join("");
 };
-const slug = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
+const slug = (s) => noAccents(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
+const initials = (s) => s.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
+const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 // „1. Cégkivonat”, „2) …”, „- …” → a sorszámot/jelölőt levágjuk, a sorrend úgyis megmarad
 const parsePoints = (text) => text.split("\n").map((l) => l.replace(/^\s*(\d+\s*[.)]|[-–•*])\s*/, "").trim()).filter(Boolean);
 
@@ -97,17 +100,17 @@ function dueLabel(deadline) {
 const stamp = (status) => h("span", { class: `stamp s-${status}` }, STATUS[status]);
 const segbar = (points) => h("div", { class: "segbar", role: "img", "aria-label": progressText(points) },
   [...points].sort(byPos).map((p) => h("span", { class: `s-${p.status}`, title: `${p.title ?? ""} – ${STATUS[p.status]}`.replace(/^ – /, "") })));
+const count = (points, status) => points.filter((p) => p.status === status).length;
 function progressText(points) {
-  const ok = points.filter((p) => p.status === "elfogadva").length;
-  const fix = points.filter((p) => p.status === "javitando").length;
-  const miss = points.filter((p) => p.status === "hianyzik").length;
+  const [ok, fix, miss] = [count(points, "elfogadva"), count(points, "javitando"), count(points, "hianyzik")];
   if (!points.length) return "Még nincs pont";
   if (ok === points.length) return "Minden pont rendben";
   const wait = points.length - ok - fix - miss;
   return `${ok} / ${points.length} rendben` + (wait ? ` · ${wait} ellenőrzésre vár` : "") + (fix ? ` · ${fix} javítandó` : "") + (miss ? ` · ${miss} hiányzik` : "");
 }
+const mark = () => h("span", { class: "mark", "aria-hidden": "true" });
 
-// Párbeszédablak a natív <dialog>-gal. A build() megkapja a bezáró függvényt.
+// Párbeszédablak a natív <dialog>-gal. A build() megkapja a bezáró függvényt. lockEscape: Esc nem zárja be.
 function modal(title, build, lockEscape) {
   const d = h("dialog", {});
   const close = () => {
@@ -124,7 +127,7 @@ function modal(title, build, lockEscape) {
 const confirmBox = (text, okLabel = "Törlés") => new Promise((resolve) => {
   modal("Biztosan?", (close) => [
     h("p", {}, text),
-    h("div", { class: "row end" },
+    h("div", { class: "row end actions" },
       h("button", { class: "btn", onclick: () => { close(); resolve(false); } }, "Mégsem"),
       h("button", { class: "btn warn", onclick: () => { close(); resolve(true); } }, okLabel)),
   ]);
@@ -138,7 +141,7 @@ function formModal(title, fields, submitLabel, onSubmit) {
         const values = Object.fromEntries(new FormData(form));
         run(form.querySelector("[type=submit]"), async () => { await onSubmit(values); close(); });
       },
-    }, fields, h("div", { class: "row end" },
+    }, fields, h("div", { class: "row end actions" },
       h("button", { class: "btn", type: "button", onclick: close }, "Mégsem"),
       h("button", { class: "btn primary", type: "submit" }, submitLabel)));
     return form;
@@ -178,13 +181,14 @@ async function render(keepScroll) {
   else {
     const [, route, id] = location.hash.split("/");
     const admin = me.role === "admin";
+    const narrow = route === "beallitasok";
     try {
       const main = route === "p" && id ? await projectView(id)
         : route === "ugyfelek" && admin ? await clientsView()
         : route === "beallitasok" ? await settingsView()
         : await homeView();
       if (!main) return; // a nézet átirányított
-      view = [header(route), h("main", { class: "wrap" }, main)];
+      view = [header(route), h("main", { class: "wrap" + (narrow ? " narrow" : "") }, main)];
     } catch (e) {
       console.error(e);
       view = [header(route), h("main", { class: "wrap" }, h("p", { class: "loading" }, explain(e)))];
@@ -197,9 +201,9 @@ async function render(keepScroll) {
 const refresh = () => render(true);
 
 function header(route) {
-  const link = (href, text, key) => h("a", { href, "aria-current": route === key || (!route && !key) ? "page" : null }, text);
+  const link = (href, text, key) => h("a", { href, "aria-current": route === key || (!route && !key) || (route === "p" && !key) ? "page" : null }, text);
   return h("header", { class: "top" }, h("div", { class: "inner" },
-    h("a", { class: "brand", href: "#/" }, brand),
+    h("a", { class: "brand", href: "#/" }, mark(), brand),
     h("nav", {},
       link("#/", "Projektek", undefined),
       me.role === "admin" && link("#/ugyfelek", "Ügyfelek", "ugyfelek"),
@@ -208,6 +212,20 @@ function header(route) {
 }
 
 // ───────────────────────── belépés ─────────────────────────
+
+// A belépő és az e-mail-kapu közös kerete: bal oldalt a mélyzöld „borító”, jobb oldalt az űrlap.
+const authShell = (formTitle, formSub, form, note) => h("div", { class: "auth" },
+  h("aside", { class: "auth-art" },
+    h("div", { class: "deco", "aria-hidden": "true" }, h("i"), h("i"), h("i")),
+    h("div", { class: "brand light" }, mark(), brand),
+    h("h1", {}, "A hiánypótlás ", h("em", {}, "rendben"), " lesz."),
+    h("p", { class: "lead" }, "Pontról pontra látja, mi hiányzik még, mit kell javítani, és mi van már elfogadva."),
+    h("ol", { class: "steps" },
+      h("li", {}, "Belép a kapott felhasználónévvel és jelszóval"),
+      h("li", {}, "Pontonként feltölti a kért dokumentumokat"),
+      h("li", {}, "Átnézzük, és e-mailben jelzünk, ha teendője van"))),
+  h("main", { class: "auth-form" }, h("div", { class: "box" },
+    h("h2", {}, formTitle), h("p", { class: "sub" }, formSub), form, h("p", { class: "note" }, note))));
 
 function loginView() {
   const form = h("form", {
@@ -228,11 +246,8 @@ function loginView() {
     field("Felhasználónév", h("input", { type: "text", name: "username", required: true, autocomplete: "username", autocapitalize: "none", spellcheck: "false" })),
     field("Jelszó", h("input", { type: "password", name: "password", required: true, autocomplete: "current-password" })),
     h("button", { class: "btn primary", type: "submit" }, "Belépés"));
-  return h("div", { class: "gate" }, h("div", { class: "box" },
-    h("h1", {}, brand),
-    h("p", { class: "sub" }, "Hiánypótlási dokumentumok feltöltése"),
-    form,
-    h("p", { class: "muted small", style: "margin:1.25rem 0 0" }, "A belépési adatokat a pályázatírójától kapta meg. Ha elvesztek, kérjen tőle új jelszót.")));
+  return authShell("Belépés", "Hiánypótlási dokumentumok feltöltése", form,
+    "A belépési adatokat a pályázatírójától kapta meg. Ha elvesztek, kérjen tőle új jelszót.");
 }
 
 // Ügyfél első belépése: értesítési e-mail-cím kötelező.
@@ -250,14 +265,11 @@ function emailGate() {
   },
     field("E-mail-cím", h("input", { type: "email", name: "email", required: true, autocomplete: "email" })),
     h("button", { class: "btn primary", type: "submit" }, "Tovább"));
-  return h("div", { class: "gate" }, h("div", { class: "box" },
-    h("h1", {}, "Hová küldjük az értesítést?"),
-    h("p", { class: "sub" }, "Erre a címre írunk, ha üzenetet kap, vagy valamelyik dokumentumot javítani kell."),
-    form,
-    h("p", { class: "muted small", style: "margin:1.25rem 0 0" }, "A címet csak a hiánypótlással kapcsolatos értesítésekre használjuk. Később a Beállításokban módosíthatja.")));
+  return authShell("Hová küldjük az értesítést?", "Erre a címre írunk, ha üzenetet kap, vagy valamelyik dokumentumot javítani kell.", form,
+    "A címet csak a hiánypótlással kapcsolatos értesítésekre használjuk. Később a Beállításokban módosíthatja.");
 }
 
-// ───────────────────────── projektlista ─────────────────────────
+// ───────────────────────── projektlista: füles mappák ─────────────────────────
 
 async function homeView() {
   const admin = me.role === "admin";
@@ -276,24 +288,29 @@ async function homeView() {
     const last = need(await sb.from("mail_log").select("error, created_at, recipients").order("id", { ascending: false }).limit(1));
     if (last[0]?.error) failedMail = last[0];
   }
+  const waiting = shown.reduce((n, p) => n + count(p.points, "feltoltve"), 0);
 
   return [
     h("div", { class: "page-head spread" },
-      h("h1", {}, admin ? (showArchived ? "Archivált projektek" : "Projektek") : "Hiánypótlásai"),
+      h("div", {},
+        h("h1", {}, admin ? (showArchived ? "Archivált projektek" : "Projektek") : "Hiánypótlásai"),
+        admin && !showArchived && shown.length > 0 && h("p", { class: "sub" }, waiting ? `${waiting} pont vár az Ön ellenőrzésére.` : "Most nincs ellenőrzésre váró pont.")),
       admin && h("div", { class: "row" },
-        h("button", { class: "btn quiet", onclick: () => { sessionStorage.setItem("archived", showArchived ? "0" : "1"); render(); } }, showArchived ? "Aktívak" : "Archiváltak"),
+        h("button", { class: "btn quiet", onclick: () => { sessionStorage.setItem("archived", showArchived ? "0" : "1"); render(); } }, showArchived ? "Aktív projektek" : "Archiváltak"),
         h("button", { class: "btn primary", onclick: () => newProjectDialog() }, "+ Új projekt"))),
     admin && !me.notify_email && h("div", { class: "banner" }, "Még nincs megadva az Ön értesítési e-mail-címe, ezért nem kap levelet, ha egy ügyfél feltölt vagy ír. ", h("a", { href: "#/beallitasok" }, "Megadom most")),
-    failedMail && h("div", { class: "banner" }, `A legutóbbi értesítő e-mail kiküldése nem sikerült (${fmtTime(failedMail.created_at)}, ${failedMail.recipients}): ${failedMail.error} `, h("a", { href: "#/beallitasok" }, "Részletek")),
-    shown.length ? h("ul", { class: "list" }, shown.map((p) => h("li", {}, h("a", { class: "proj", href: `#/p/${p.id}` },
-      h("div", {},
-        h("div", { class: "name" }, admin ? p.client.name : p.title, " ", unread(p) > 0 && h("span", { class: "dot" }, admin ? `${unread(p)} új` : "Új")),
-        h("div", { class: "meta" }, [admin && p.title, p.reference].filter(Boolean).join(" · "))),
-      h("div", { class: "right" }, h("div", {}, progressText(p.points)), dueLabel(p.deadline)),
-      segbar(p.points)))))
+    failedMail && h("div", { class: "banner" }, `A legutóbbi e-mail kiküldése nem sikerült (${fmtTime(failedMail.created_at)}, ${failedMail.recipients}): ${failedMail.error} `, h("a", { href: "#/beallitasok" }, "Részletek")),
+    shown.length ? h("div", { class: "folders" }, shown.map((p) => h("a", { class: "folder" + (p.archived ? " archived" : ""), href: `#/p/${p.id}` },
+      h("span", { class: "tab" }, h("b", {}, admin ? p.client.name : p.reference || "Hiánypótlás"), unread(p) > 0 && h("i", { title: "Új tevékenység" })),
+      h("span", { class: "sheet" },
+        h("span", { class: "f-title" }, p.title, " ", unread(p) > 0 && h("span", { class: "dot" }, admin ? `${unread(p)} új` : "Új")),
+        admin && p.reference && h("span", { class: "f-meta" }, p.reference),
+        segbar(p.points),
+        h("span", { class: "f-foot" }, h("strong", {}, progressText(p.points)), dueLabel(p.deadline))))))
       : h("div", { class: "empty" }, admin
-        ? (showArchived ? "Nincs archivált projekt." : "Még nincs projekt. Az „Új projekt” gombbal vehet fel egyet – az ügyfelet is ott lehet létrehozni.")
-        : "Jelenleg nincs hiánypótlási feladata."),
+        ? (showArchived ? "Nincs archivált projekt."
+          : [h("strong", {}, "Itt lesznek a mappák"), "Az „Új projekt” gombbal vehet fel egyet – az ügyfelet is ott lehet létrehozni."])
+        : [h("strong", {}, "Nincs teendője"), "Jelenleg nincs hiánypótlási feladata."]),
   ];
 }
 
@@ -303,11 +320,12 @@ async function newProjectDialog(presetClientId) {
   formModal("Új projekt", [
     field("Ügyfél", h("select", { name: "client_id", required: true, value: presetClientId || clients[0].id },
       clients.map((c) => h("option", { value: c.id }, c.name)))),
-    h("p", { class: "small", style: "margin-top:-.5rem" }, h("button", { class: "btn quiet", type: "button", onclick: (ev) => { ev.target.closest("dialog").close(); ev.target.closest("dialog").remove(); clientDialog(null, (id) => newProjectDialog(id)); } }, "+ Új ügyfél felvétele")),
+    h("p", { class: "small", style: "margin:-.6rem 0 .6rem" }, h("button", { class: "btn quiet", type: "button", onclick: (ev) => { ev.target.closest("dialog").close(); ev.target.closest("dialog").remove(); clientDialog(null, (id) => newProjectDialog(id)); } }, "+ Új ügyfél felvétele")),
     field("Projekt neve", h("input", { type: "text", name: "title", required: true, maxlength: 200, placeholder: "pl. Telephelyfejlesztés – hiánypótlás" })),
-    field("Pályázati azonosító", h("input", { type: "text", name: "reference", maxlength: 100 }), "nem kötelező"),
-    field("Hiánypótlási határidő", h("input", { type: "date", name: "deadline" }), "nem kötelező"),
-    field("Hiánypótlási pontok", h("textarea", { name: "points", rows: 7, placeholder: "1. Cégkivonat (30 napnál nem régebbi)\n2. Aláírási címpéldány\n3. Árajánlatok" }),
+    h("div", { class: "two" },
+      field("Pályázati azonosító", h("input", { type: "text", name: "reference", maxlength: 100, placeholder: "nem kötelező" })),
+      field("Határidő (nem kötelező)", h("input", { type: "date", name: "deadline" }))),
+    field("Hiánypótlási pontok", h("textarea", { name: "points", rows: 5, placeholder: "1. Cégkivonat (30 napnál nem régebbi)\n2. Aláírási címpéldány\n3. Árajánlatok" }),
       "Soronként egy pont – a felszólítás listája egyben bemásolható. Később is bővíthető."),
   ], "Létrehozás", async (v) => {
     const proj = need(await sb.from("projects").insert({
@@ -328,7 +346,7 @@ async function projectView(id) {
   const admin = me.role === "admin";
   const project = need(await sb.from("projects")
     .select("*, client:profiles(id, name, username, notify_email), points(*, files(*), messages(*))").eq("id", id).maybeSingle());
-  if (!project) return h("div", { class: "empty", style: "margin-top:2rem" }, "Ez a projekt nem található. ", h("a", { href: "#/" }, "Vissza a listához"));
+  if (!project) return h("div", { class: "empty", style: "margin-top:2.5rem" }, h("strong", {}, "Ez a projekt nem található"), h("a", { href: "#/" }, "Vissza a listához"));
   const points = project.points.sort(byPos);
 
   // Az „Új” jelzőt ebben a megjelenítésben még mutatjuk, a szerveren viszont már töröljük.
@@ -339,23 +357,27 @@ async function projectView(id) {
   }
 
   const files = points.flatMap((p) => p.files);
+  const ok = count(points, "elfogadva");
   return [
-    h("div", { class: "page-head" },
+    h("section", { class: "hero" },
       h("a", { class: "back", href: "#/" }, "← Projektek"),
-      h("h1", {}, project.title),
-      h("p", { class: "muted", style: "margin:.35rem 0 0" }, [admin && project.client.name, project.reference].filter(Boolean).join(" · "))),
-    h("section", { class: "summary" },
-      h("div", { class: "facts" }, h("strong", {}, progressText(points)), dueLabel(project.deadline)),
-      segbar(points),
-      admin && !project.client.notify_email && h("div", { class: "small s-javitando" }, "Az ügyfél még nem adott meg e-mail-címet (első belépéskor kérjük be), addig nem kap értesítést."),
-      admin && h("div", { class: "row small" },
-        h("button", { class: "btn quiet", onclick: () => addPointsDialog(project, points) }, "+ Pontok hozzáadása"),
-        h("button", { class: "btn quiet", onclick: () => editProjectDialog(project) }, "Adatok szerkesztése"),
-        files.length > 0 && h("button", { class: "btn quiet", onclick: (ev) => run(ev.target, () => downloadZip(project, points)) }, `Összes fájl letöltése (${files.length})`),
-        h("button", { class: "btn quiet", onclick: (ev) => run(ev.target, async () => { need(await sb.from("projects").update({ archived: !project.archived }).eq("id", id)); toast(project.archived ? "Visszaállítva." : "Archiválva."); refresh(); }) }, project.archived ? "Visszaállítás az aktívak közé" : "Archiválás"),
-        h("button", { class: "btn danger", onclick: () => deleteProject(project, files) }, "Projekt törlése"))),
+      h("div", { class: "hero-main" },
+        h("div", {},
+          h("p", { class: "client" }, [admin && project.client.name, project.reference].filter(Boolean).join(" · ") || "Hiánypótlás"),
+          h("h1", {}, project.title),
+          h("div", { class: "facts" }, h("span", {}, progressText(points)), dueLabel(project.deadline))),
+        points.length > 0 && h("div", { class: "ring", style: `--p:${Math.round((ok / points.length) * 100)}`, role: "img", "aria-label": `${ok} / ${points.length} pont rendben` },
+          h("span", {}, String(ok), h("small", {}, ` / ${points.length}`)))),
+      points.length > 0 && segbar(points)),
+    admin && !project.client.notify_email && h("div", { class: "notice" }, "Az ügyfél még nem adott meg e-mail-címet (első belépéskor kérjük be), addig nem kap értesítést."),
+    admin && h("div", { class: "toolbar" },
+      h("button", { class: "btn quiet", onclick: () => addPointsDialog(project, points) }, "+ Pontok hozzáadása"),
+      h("button", { class: "btn quiet", onclick: () => editProjectDialog(project) }, "Adatok szerkesztése"),
+      files.length > 0 && h("button", { class: "btn quiet", onclick: (ev) => run(ev.target, () => downloadZip(project, points)) }, `Összes fájl letöltése (${files.length})`),
+      h("button", { class: "btn quiet", onclick: (ev) => run(ev.target, async () => { need(await sb.from("projects").update({ archived: !project.archived }).eq("id", id)); toast(project.archived ? "Visszaállítva." : "Archiválva."); refresh(); }) }, project.archived ? "Visszaállítás az aktívak közé" : "Archiválás"),
+      h("button", { class: "btn danger", onclick: () => deleteProject(project, files) }, "Projekt törlése")),
     points.length ? points.map((p, i) => pointCard(project, p, i + 1))
-      : h("div", { class: "empty" }, admin ? "Ehhez a projekthez még nincs hiánypótlási pont." : "Ehhez a projekthez még nincs feltöltendő dokumentum."),
+      : h("div", { class: "empty" }, h("strong", {}, "Üres a mappa"), admin ? "Ehhez a projekthez még nincs hiánypótlási pont." : "Ehhez a projekthez még nincs feltöltendő dokumentum."),
   ];
 }
 
@@ -384,14 +406,14 @@ function pointCard(project, p, no) {
     refresh();
   });
 
-  const status = h("span", { class: "small muted" });
+  const status = h("span", { class: "small muted upload-status" });
   const input = h("input", { type: "file", multiple: true, onchange: () => { upload(project, p, input.files, status); } });
   const drop = h("label", {
     class: "drop",
     ondragover: (ev) => { ev.preventDefault(); drop.classList.add("over"); },
     ondragleave: () => drop.classList.remove("over"),
     ondrop: (ev) => { ev.preventDefault(); drop.classList.remove("over"); upload(project, p, ev.dataTransfer.files, status); },
-  }, input, h("strong", {}, "Fájlok kiválasztása"), " vagy húzza ide őket", h("br"), h("span", { class: "small" }, "Több fájl is feltölthető, egyenként legfeljebb 50 MB. Telefonról fotó is készíthető."));
+  }, input, h("span", {}, h("strong", {}, "Fájlok kiválasztása"), " vagy húzza ide őket"), h("span", { class: "small" }, "Több fájl is feltölthető, egyenként legfeljebb 50 MB. Telefonról fotó is készíthető."));
 
   return h("details", {
     class: `point s-${p.status}`, open, id: `pont-${p.id}`,
@@ -406,17 +428,18 @@ function pointCard(project, p, no) {
 
       h("h3", {}, "Dokumentumok"),
       p.files.length ? h("ul", { class: "files" }, p.files.sort(byTime).map((f) => h("li", {},
+        h("span", { class: "ext" }, (f.name.includes(".") ? f.name.split(".").pop() : "fájl").slice(0, 4).toUpperCase()),
         h("button", { class: "fname", onclick: () => openFile(f) }, f.name),
         h("span", { class: "info" }, `${fmtSize(f.size)} · ${fmtTime(f.created_at)}${f.from_admin ? ` · ${admin ? "Ön mellékelte" : "a pályázatíró mellékelte"}` : ""}`),
         h("button", { class: "act", onclick: (ev) => run(ev.target, () => openFile(f, true)) }, "letöltés"),
-        myFiles(f) && h("button", { class: "act", onclick: () => deleteFile(f) }, "törlés"))))
-        : h("p", { class: "muted small" }, "Még nincs feltöltött fájl."),
+        myFiles(f) && h("button", { class: "act del", onclick: () => deleteFile(f) }, "törlés"))))
+        : h("p", { class: "muted small", style: "margin:0" }, "Még nincs feltöltött fájl."),
       locked ? h("p", { class: "locked" }, "✓ Ezt a pontot elfogadtuk, további teendője nincs vele.") : [drop, status],
 
       h("h3", {}, "Megjegyzések"),
-      p.messages.sort(byTime).map((m) => h("div", { class: "msg" + (m.from_admin === admin ? " mine" : "") },
+      p.messages.length > 0 && h("div", { class: "thread" }, p.messages.sort(byTime).map((m) => h("div", { class: "msg" + (m.from_admin === admin ? " mine" : "") },
         h("div", { class: "who" }, `${m.from_admin === admin ? "Ön" : admin ? project.client.name : brand} · ${fmtTime(m.created_at)}`),
-        h("div", { class: "text" }, m.body))),
+        h("div", { class: "text" }, m.body)))),
       h("div", { class: "composer" }, text, h("div", { class: "row" },
         admin ? [
           h("button", { class: "btn", onclick: send(null) }, "Üzenet küldése"),
@@ -445,7 +468,7 @@ async function upload(project, point, fileList, statusEl) {
     const up = await sb.storage.from("docs").upload(path, f, { contentType: f.type || "application/octet-stream" });
     if (up.error) { errors.push(`${f.name}: ${explain(up.error)}`); continue; }
     const row = await sb.from("files").insert({ point_id: point.id, path, name: f.name, size: f.size });
-    if (row.error) { await sb.storage.from("docs").remove([path]); errors.push(`${f.name}: ${explain(row.error)}`); continue; }
+    if (row.error) { errors.push(`${f.name}: ${explain(row.error)}`); continue; }   // az árva objektumot a pont/projekt törlése viszi
     done++;
   }
   statusEl.textContent = "";
@@ -517,8 +540,9 @@ function addPointsDialog(project, points) {
 function editProjectDialog(project) {
   formModal("Projekt adatai", [
     field("Projekt neve", h("input", { type: "text", name: "title", required: true, maxlength: 200, value: project.title })),
-    field("Pályázati azonosító", h("input", { type: "text", name: "reference", maxlength: 100, value: project.reference || "" })),
-    field("Hiánypótlási határidő", h("input", { type: "date", name: "deadline", value: project.deadline || "" })),
+    h("div", { class: "two" },
+      field("Pályázati azonosító", h("input", { type: "text", name: "reference", maxlength: 100, value: project.reference || "" })),
+      field("Határidő", h("input", { type: "date", name: "deadline", value: project.deadline || "" }))),
   ], "Mentés", async (v) => {
     need(await sb.from("projects").update({ title: v.title.trim(), reference: v.reference.trim() || null, deadline: v.deadline || null }).eq("id", project.id));
     refresh();
@@ -553,16 +577,17 @@ async function clientsView() {
   return [
     h("div", { class: "page-head spread" }, h("h1", {}, "Ügyfelek"),
       h("button", { class: "btn primary", onclick: () => clientDialog(null, refresh) }, "+ Új ügyfél")),
-    clients.length ? h("ul", { class: "list" }, clients.map((c) => h("li", { class: "plain-row" },
+    clients.length ? h("div", { class: "people" }, clients.map((c) => h("div", { class: "person" },
+      h("div", { class: "avatar", "aria-hidden": "true" }, initials(c.name)),
       h("div", {},
-        h("div", { class: "name", style: "font-family:var(--serif);font-size:1.1rem;font-weight:600" }, c.name),
+        h("div", { class: "name" }, c.name),
         h("div", { class: "muted small" }, `Felhasználónév: ${c.username} · ${c.notify_email || "e-mail-címet még nem adott meg"} · ${c.projects.length} projekt`)),
       h("div", { class: "row small" },
         h("button", { class: "btn quiet", onclick: () => newProjectDialog(c.id) }, "Új projekt"),
         h("button", { class: "btn quiet", onclick: () => clientDialog(c, refresh) }, "Szerkesztés"),
         h("button", { class: "btn quiet", onclick: () => resetPassword(c) }, "Új jelszó"),
         h("button", { class: "btn danger", onclick: () => deleteClient(c) }, "Törlés")))))
-      : h("div", { class: "empty" }, "Még nincs ügyfél."),
+      : h("div", { class: "empty" }, h("strong", {}, "Még nincs ügyfél"), "Az „Új ügyfél” gombbal vehet fel egyet."),
   ];
 }
 
@@ -574,7 +599,7 @@ function clientDialog(c, then) {
   formModal(c ? "Ügyfél szerkesztése" : "Új ügyfél", [
     field("Név", h("input", { type: "text", name: "name", required: true, maxlength: 200, value: c?.name || "", placeholder: "Cégnév vagy kapcsolattartó", oninput: (ev) => { if (!c && !touched) username.value = slug(ev.target.value); } })),
     !c && field("Felhasználónév", username, "Ezzel lép be: kisbetű, szám, pont, kötőjel."),
-    field("Értesítési e-mail-cím", h("input", { type: "email", name: "notify_email", value: c?.notify_email || "" }), "Nem kötelező – ha üres, az ügyfél adja meg az első belépéskor."),
+    field("E-mail-cím", h("input", { type: "email", name: "notify_email", value: c?.notify_email || "" }), "Ide mennek az értesítések. Nem kötelező – ha üres, az ügyfél adja meg az első belépéskor."),
     !c && field("Jelszó", h("input", { type: "text", name: "password", required: true, minlength: 8, value: genPassword(), autocomplete: "off" }), "Előre generáltuk; átírható (legalább 8 karakter)."),
   ], c ? "Mentés" : "Létrehozás", async (v) => {
     if (c) {
@@ -582,7 +607,7 @@ function clientDialog(c, then) {
       then(c.id);
     } else {
       const { id } = await api("create_client", v);
-      credentialsDialog(v.name.trim(), v.username.trim().toLowerCase(), v.password, () => then(id));
+      credentialsDialog({ id, name: v.name.trim(), username: v.username.trim().toLowerCase(), email: v.notify_email.trim() }, v.password, () => then(id));
     }
   });
 }
@@ -592,19 +617,32 @@ function resetPassword(c) {
     field("Új jelszó", h("input", { type: "text", name: "password", required: true, minlength: 8, value: genPassword(), autocomplete: "off" }), "A régi jelszó azonnal érvényét veszti."),
   ], "Jelszó beállítása", async (v) => {
     await api("update_client", { id: c.id, password: v.password });
-    credentialsDialog(c.name, c.username, v.password, () => {});
+    credentialsDialog({ id: c.id, name: c.name, username: c.username, email: c.notify_email || "" }, v.password, () => {});
   });
 }
 
-// A jelszót csak most látjuk – kész, kimásolható levélszöveget adunk az adminnak.
-function credentialsDialog(name, username, password, then) {
-  const text = `Tisztelt ${name}!\n\nA hiánypótláshoz szükséges dokumentumokat az alábbi oldalon tudja feltölteni:\n${location.origin}${location.pathname}\n\nFelhasználónév: ${username}\nJelszó: ${password}\n\nAz első belépéskor meg kell adnia egy e-mail-címet – erre küldünk értesítést, ha üzenetet írunk, vagy valamit javítani kell.`;
+// A jelszót csak most látjuk. Az admin itt ellenőrzi (és átírhatja) a levelet, majd innen el is küldheti az ügyfélnek.
+function credentialsDialog(client, password, then) {
+  const letter = h("textarea", { class: "letter", "aria-label": "A levél szövege", maxlength: 5000 },
+    `Tisztelt ${client.name}!\n\nA hiánypótláshoz szükséges dokumentumokat az alábbi oldalon tudja feltölteni:\n${location.origin}${location.pathname}\n\nFelhasználónév: ${client.username}\nJelszó: ${password}\n\nAz első belépéskor meg kell adnia egy e-mail-címet – erre küldünk értesítést, ha üzenetet írunk, vagy valamit javítani kell.\n\nÜdvözlettel:\n${brand}`);
+  const to = h("input", { type: "email", name: "to", value: client.email, placeholder: "ugyfel@pelda.hu", autocomplete: "off" });
   modal("Belépési adatok", (close) => [
-    h("p", {}, "Küldje el ezt az ügyfélnek. A jelszó később nem jeleníthető meg újra (új viszont bármikor adható)."),
-    h("pre", {}, text),
-    h("div", { class: "row end" },
-      h("button", { class: "btn", onclick: (ev) => run(ev.target, async () => { await navigator.clipboard.writeText(text); toast("Vágólapra másolva."); }) }, "Szöveg másolása"),
-      h("button", { class: "btn primary", onclick: () => { close(); then(); } }, "Kész")),
+    h("p", { class: "muted" }, "Ez a levél megy az ügyfélnek – küldés előtt átírható. A jelszó később nem jeleníthető meg újra (új viszont bármikor adható)."),
+    field("A levél szövege", letter),
+    field("Címzett e-mail-címe", to),
+    h("div", { class: "row end actions" },
+      h("button", { class: "btn quiet", onclick: (ev) => run(ev.target, async () => { await navigator.clipboard.writeText(letter.value); toast("Vágólapra másolva."); }) }, "Szöveg másolása"),
+      h("button", { class: "btn", onclick: () => { close(); then(); } }, "Bezárás"),
+      h("button", {
+        class: "btn primary", onclick: (ev) => run(ev.target, async () => {
+          const email = to.value.trim();
+          if (!EMAIL.test(email)) { to.focus(); throw new Error("Adja meg az ügyfél e-mail-címét."); }
+          if (!letter.value.trim()) { letter.focus(); throw new Error("A levél szövege üres."); }
+          await api("send_credentials", { id: client.id, to: email, text: letter.value });
+          ev.target.textContent = "✓ Elküldve"; ev.target.classList.replace("primary", "done");
+          toast(`A levél elment ide: ${email}`);
+        }),
+      }, "E-mail küldése")),
   ], true);
 }
 
@@ -625,7 +663,7 @@ async function settingsView() {
   const log = admin ? need(await sb.from("mail_log").select("*").order("id", { ascending: false }).limit(25)) : [];
 
   return [
-    h("div", { class: "page-head" }, h("h1", {}, "Beállítások"), h("p", { class: "muted", style: "margin:.35rem 0 0" }, `${me.name} · felhasználónév: ${me.username}`)),
+    h("div", { class: "page-head" }, h("h1", {}, "Beállítások"), h("p", { class: "sub" }, `${me.name} · felhasználónév: ${me.username}`)),
 
     h("section", { class: "card" }, h("h2", {}, "Értesítési e-mail-cím"),
       simpleForm(field("E-mail-cím", h("input", { type: "email", name: "email", required: true, value: me.notify_email || "" }),
@@ -651,12 +689,12 @@ async function settingsView() {
           brand = v.brand.trim(); document.title = brand; toast("Mentve."); refresh();
         })),
 
-    admin && h("section", { class: "card" }, h("h2", {}, "Kiküldött értesítések"),
+    admin && h("section", { class: "card" }, h("h2", {}, "Kiküldött levelek"),
       log.length ? h("div", { class: "scroll-x" }, h("table", { class: "log" }, log.map((l) => h("tr", {},
         h("td", { style: "white-space:nowrap" }, fmtTime(l.created_at)),
         h("td", {}, l.recipients),
         h("td", {}, l.subject, l.error && h("div", { class: "s-javitando" }, `Hiba: ${l.error}`))))))
-        : h("p", { class: "muted small" }, "Még nem ment ki értesítés."),
+        : h("p", { class: "muted small" }, "Még nem ment ki levél."),
       h("p", { class: "muted small", style: "margin:.75rem 0 0" }, "Az értesítés az utolsó változás után kb. 5 perccel megy ki, egy levélben összefoglalva. Ha a címzett közben megnézte a portálon, nem küldünk levelet.")),
   ];
 }

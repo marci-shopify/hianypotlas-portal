@@ -121,6 +121,8 @@ try {
   await fails("A törli B-t a function-nel", fn(ca, "delete_client", { id: b }));
   await fails("A törli B projektjét a function-nel", fn(ca, "delete_project", { id: pb }));
   await fails("A törli B fájlját a function-nel", fn(ca, "delete_file", { id: fileB }));
+  await fails("A levelet küld a function-nel (nyílt levéltovábbítás ellen)", fn(ca, "send_credentials", { id: b, to: "valaki@example.com", text: "x" }));
+  await fails("névtelen levelet küld a function-nel", fn(browser(), "send_credentials", { id: b, to: "valaki@example.com", text: "x" }));
   await fails("névtelen hívja a function-t", fn(browser(), "delete_file", { id: fileB }));
   const badSecret = await fetch(`${url}/functions/v1/portal`, { method: "POST", headers: { "Content-Type": "application/json", "x-notify-secret": "rossz" }, body: JSON.stringify({ action: "notify", project_id: pa, side: "client" }) });
   ok(badSecret.status === 403, "értesítés rossz titokkal: 403");

@@ -1,4 +1,4 @@
-# Hiánypótlás portál
+# Pályázatsegítő – hiánypótlás portál
 
 Ügyfélportál pályázatíróknak: az ügyfél pontonként tölti fel a hiánypótlási dokumentumokat, a
 pályázatíró átnézi, elfogad vagy javítást kér, a változásokról mindkét fél e-mailt kap.
@@ -8,7 +8,7 @@ pályázatíró átnézi, elfogad vagy javítást kér, a változásokról mindk
 ## Hogyan működik
 
 1. Az admin az **Új projekt** gombbal felveszi az ügyfelet és bemásolja a hiánypótlási pontokat
-   (soronként egyet). A portál kész, kimásolható levelet ad a belépési adatokkal.
+   (soronként egyet). A belépési adatokat tartalmazó levelet a portál megmutatja, és onnan el is küldhető.
 2. Az ügyfél belép, megadja az értesítési e-mail-címét, és minden ponthoz feltölti a fájlokat;
    megjegyzést is írhat.
 3. Az admin pontonként **elfogad** vagy **javítást kér** – az ügyfél néhány percen belül egy
