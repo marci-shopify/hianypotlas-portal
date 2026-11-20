@@ -241,3 +241,9 @@ await as(A, async () => {
 ok((await as(ADMIN, () => rows(`select id from mail_log`))).length === 1, "admin látja a levélnaplót");
 
 console.log(`OK – ${tests} ellenőrzés sikeres`);
+
+// ── Teendő (points.instruction): admin írja, ügyfél csak olvassa ──
+await as(A, () => denied("A átírja a Teendőt", `update points set instruction = 'x' where id = $1`, [ptA2]));
+await as(ADMIN, () => db.query(`update points set instruction = 'Szállítólevél kell' where id = $1`, [ptA2]));
+await as(A, async () => ok((await rows(`select instruction from points where id = $1`, [ptA2]))[0].instruction === "Szállítólevél kell", "A látja a Teendőt"));
+console.log(`OK – Teendő ellenőrzések`);

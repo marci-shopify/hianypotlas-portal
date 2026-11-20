@@ -206,7 +206,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 const huDate = (d: string) => d.slice(0, 10).replaceAll("-", ". ") + ".";
 
 type Point = {
-  position: number; title: string; status: string; client_unread: boolean; admin_unread: boolean; updated_at: string;
+  position: number; title: string; status: string; client_unread: boolean; admin_unread: boolean; updated_at: string; instruction: string | null;
   files: { name: string; from_admin: boolean; created_at: string }[];
   messages: { body: string; from_admin: boolean; created_at: string }[];
 };
@@ -217,7 +217,7 @@ async function notify(projectId: string, side: "client" | "admin") {
   const { data: p, error } = await db.from("projects")
     .select(`id, title, reference, deadline, client_notified_at, admin_notified_at,
              client:profiles(name, notify_email, notify_email2),
-             points(position, title, status, client_unread, admin_unread, updated_at,
+             points(position, title, instruction, status, client_unread, admin_unread, updated_at,
                     files(name, from_admin, created_at), messages(body, from_admin, created_at))`)
     .eq("id", projectId).single();
   if (error) fail(error.message);
@@ -261,6 +261,7 @@ async function notify(projectId: string, side: "client" | "admin") {
     intro, deadline, "",
     ...items.flatMap(({ pt, msgs, files }) => [
       `${pt.position}. ${pt.title} — ${STATUS[pt.status]}`,
+      ...(toClient && pt.instruction ? [`   Teendő: ${pt.instruction}`] : []),
       ...(files.length ? [`   Új fájl: ${files.map((f) => f.name).join(", ")}`] : []),
       ...msgs.map((m) => `   „${m.body}”`),
       "",
@@ -274,6 +275,7 @@ async function notify(projectId: string, side: "client" | "admin") {
 ${deadline ? `<p style="margin:0 0 16px"><strong>${esc(deadline)}</strong></p>` : ""}
 ${items.map(({ pt, msgs, files }) => `<div style="border-left:3px solid ${color[pt.status]};padding:6px 0 6px 14px;margin:0 0 14px">
 <div><strong>${pt.position}. ${esc(pt.title)}</strong> <span style="color:${color[pt.status]};font-size:13px;white-space:nowrap">· ${STATUS[pt.status]}</span></div>
+${toClient && pt.instruction ? `<div style="font-size:15px;color:#1f4fa3;margin-top:4px;white-space:pre-line"><strong>Teendő:</strong> ${esc(pt.instruction)}</div>` : ""}
 ${files.length ? `<div style="font-size:14px;color:#555">Új fájl: ${esc(files.map((f) => f.name).join(", "))}</div>` : ""}
 ${msgs.map((m) => `<div style="font-size:15px;margin-top:6px;white-space:pre-line">${esc(m.body)}</div>`).join("")}
 </div>`).join("")}

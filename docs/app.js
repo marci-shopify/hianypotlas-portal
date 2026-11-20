@@ -226,8 +226,8 @@ async function render(keepScroll) {
 const TOUR_KEY = () => `tour-${me.id}`;
 const seenTour = () => { try { return localStorage.getItem(TOUR_KEY()) === "1"; } catch { return true; } };
 const TOUR = [
-  ["Üdvözöljük!", `Ez a felület ${ADVISOR.name} (${brand}) és Ön közös munkaterülete a hiánypótláshoz. Négy lépésben megmutatjuk, hogyan működik.`],
-  ["A pontok", "A hivatal felszólításának minden pontja egy külön lap. Kattintson egy pontra, és kinyílik: ott látja, mit kérnek, és mi az állapota (Hiányzik, Ellenőrzésre vár, Javítandó, Rendben)."],
+  ["Üdvözöljük!", `Ez a felület ${ADVISOR.name} (${brand}) és az Ön közös munkaterülete a hiánypótláshoz. Négy lépésben megmutatjuk, hogyan működik.`],
+  ["A pontok", "A hivatal felszólításának minden pontja külön sorban szerepel. Kattintson egy pontra, és lenyílik: ott látja, mit kér a hivatal, mi a teendője (kék betűvel), és mi a pont állapota (Hiányzik, Ellenőrzésre vár, Javítandó, Rendben)."],
   ["Feltöltés", "A kinyitott ponton a „Fájlok kiválasztása” mezővel töltheti fel a kért dokumentumokat – telefonról fotót is készíthet. Feltöltés után a pont „Ellenőrzésre vár” lesz."],
   ["Üzenet és az eredeti felszólítás", "Minden pont alján üzenetet írhat, ha kérdése van. Az oldal tetején az „Eredeti felszólítás” gombbal bármikor megnézheti a hivatal levelét. Ha valamit javítani kell, e-mailben szólunk."],
 ];
@@ -249,7 +249,7 @@ const refresh = () => render(true);
 function header(route) {
   const link = (href, text, key) => h("a", { href, "aria-current": route === key || (!route && !key) || (route === "p" && !key) ? "page" : null }, text);
   return h("header", { class: "top" }, h("div", { class: "inner" },
-    h("a", { class: "brand-block", href: "#/" }, h("span", { class: "brand" }, mark(), brand), advisor("small")),
+    h("a", { class: "brand-block", href: "#/" }, h("span", { class: "brand" }, mark(), brand), advisor("small"), h("span", { class: "role-pill" + (me.role === "admin" ? " admin" : "") }, me.role === "admin" ? "Admin felület" : "Ügyfélportál")),
     h("nav", {},
       link("#/", "Projektek", undefined),
       me.role === "admin" && link("#/ugyfelek", "Ügyfelek", "ugyfelek"),
@@ -267,7 +267,7 @@ const authShell = (formTitle, formSub, form, note) => h("div", { class: "auth" }
     h("div", { class: "brand light" }, mark(), brand),
     advisor("light"),
     h("h1", { class: "motto-h" }, h("em", {}, "Interaktív felület"), " a pályázatok megvalósítási szakaszában"),
-    h("p", { class: "lead" }, "Pontról pontra látja, mi hiányzik még, mit kell javítani, és mi van már elfogadva."),
+    h("p", { class: "lead" }, "Hiánypótlása során pontról pontra látja, mi hiányzik még, mit kell javítani, és mi van már elfogadva."),
     h("ol", { class: "steps" },
       h("li", {}, "Belép a kapott felhasználónévvel és jelszóval"),
       h("li", {}, "Pontonként feltölti a kért dokumentumokat"),
@@ -449,6 +449,18 @@ async function projectView(id) {
   ];
 }
 
+// Az admin pontonkénti, ÁLLANDÓ utasítása az ügyfélnek (nem üzenet): az ügyfél kék betűvel látja a pont szövege alatt.
+// Mentéskor a pont olvasatlan lesz az ügyfélnek, így a következő kézi értesítésbe bekerül.
+function instructionEditor(p) {
+  const box = h("textarea", { rows: 2, maxlength: 5000, "aria-label": "Teendő az ügyfélnek", placeholder: "Mit kell az ügyfélnek csinálnia ennél a pontnál? (az ügyfél kék betűvel látja)" }, p.instruction || "");
+  const save = h("button", { class: "btn", type: "button", onclick: (ev) => run(ev.target, async () => {
+    const v = box.value.trim() || null;
+    need(await sb.from("points").update({ instruction: v, client_unread: true, updated_at: new Date().toISOString() }).eq("id", p.id));
+    p.instruction = v; save.textContent = "✓ Mentve"; setTimeout(() => (save.textContent = "Teendő mentése"), 2500);
+  }) }, "Teendő mentése");
+  return h("div", { class: "instruction-edit" }, h("h3", {}, "Teendő az ügyfélnek"), box, h("div", { class: "row" }, save));
+}
+
 // Az ügyfél CSAK erre a gombra kap e-mailt: összefoglaló a még nem látott pontokról (új pont, üzenet, státusz).
 function notifyBar(project, points) {
   const c = project.client;
@@ -476,6 +488,8 @@ function pointCard(project, p, no) {
   const isNew = admin ? p.admin_unread : p.client_unread;
   const open = openState.has(p.id) ? openState.get(p.id) : p.status !== "elfogadva" || isNew;
   const myFiles = (f) => admin || (f.uploaded_by === me.id && !locked);
+  // A felszólításból beolvasott hosszú pontnál a cím a leírás eleje – ne jelenjen meg kétszer.
+  const repeats = !!p.description && p.title.endsWith("…") && p.description.startsWith(p.title.slice(0, -1));
 
   const text = h("textarea", {
     rows: 2, maxlength: 5000, "aria-label": "Üzenet",
@@ -509,10 +523,11 @@ function pointCard(project, p, no) {
   },
     h("summary", {},
       h("span", { class: "no" }, String(no).padStart(2, "0")),
-      h("span", { class: "title" }, p.title),
+      h("span", { class: "title" }, repeats ? [h("span", { class: "t-short" }, p.title), h("span", { class: "t-full" }, p.description)] : p.title),
       h("span", { class: "badges" }, isNew && h("span", { class: "dot" }, "Új"), stamp(p.status))),
     h("div", { class: "body" },
-      p.description && h("div", { class: "desc" }, p.description),
+      !repeats && p.description && h("div", { class: "desc" }, p.description),
+      admin ? instructionEditor(p) : p.instruction && h("div", { class: "instruction" }, h("b", {}, "Teendő: "), p.instruction),
 
       h("h3", {}, "Dokumentumok"),
       p.files.length ? h("ul", { class: "files" }, p.files.sort(byTime).map((f) => h("li", {},

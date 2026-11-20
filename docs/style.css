@@ -298,3 +298,14 @@ table.log td { padding: .45rem .6rem .45rem 0; border-bottom: 1px solid var(--so
 .notify-bar .small { color: var(--muted); margin-top: .15rem; }
 .linkish { background: none; border: 0; padding: 0; font: inherit; color: var(--forest); text-decoration: underline; cursor: pointer; }
 .tour-step { margin: -.4rem 0 .4rem; font: italic 500 .95rem var(--display); color: var(--brass); }
+
+/* ── szerep-jelölő, egyszeri pontszöveg, Teendő (2026-11-20) ── */
+.role-pill { font-size: .75rem; font-weight: 600; padding: .3em .8em; border-radius: 999px; background: var(--soft); color: var(--muted); border: 1px solid var(--line); }
+.role-pill.admin { background: var(--forest); color: #f6f3ea; border-color: var(--forest); }
+.point .title .t-full { display: none; }
+.point[open] .title .t-short { display: none; }
+.point[open] .title .t-full { display: inline; }
+.instruction { color: #1f4fa3; white-space: pre-line; overflow-wrap: anywhere; max-width: 62ch; padding: .35rem 0 .2rem; font-weight: 500; }
+.instruction b { font-weight: 700; }
+.instruction-edit textarea { color: #1f4fa3; }
+.instruction-edit h3 { color: #1f4fa3; }
