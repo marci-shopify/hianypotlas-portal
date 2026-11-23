@@ -138,7 +138,8 @@ async function sendCredentials(b: { id: string; to?: string | string[]; text?: s
   if (!to.length || to.length > 2 || !to.every((a) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a))) fail("Érvénytelen e-mail-cím.");
   if (!text || text.length > 5000) fail("A levél szövege üres vagy túl hosszú.");
   const html = `<div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#14251f;line-height:1.55;white-space:pre-line">${esc(text)}</div>`;
-  await sendMail(null, to, "Belépési adatok a hiánypótláshoz", text, html, replyTo ?? undefined);
+  // Másolat az adminnak (értesítési címére), hogy lássa: kiment.
+  await sendMail(null, to, "Belépési adatok a hiánypótláshoz", text, html, replyTo ?? undefined, replyTo ? [replyTo] : undefined);
   // Ha az ügyfélnek még nincs értesítési címe, ez lesz az (így az első belépéskor már nem kell megadnia).
   await db.from("profiles").update({ notify_email: to[0] }).eq("id", b.id).is("notify_email", null);
   if (to[1]) await db.from("profiles").update({ notify_email2: to[1] }).eq("id", b.id).is("notify_email2", null);
@@ -305,7 +306,7 @@ ${toClient ? `<p style="font-size:13px;color:#777;font-family:Arial,sans-serif">
 }
 
 // Minden kiküldés (és minden hiba) bekerül a mail_log táblába – a csendes hiba a legrosszabb fajta.
-async function sendMail(projectId: string | null, to: string[], subject: string, text: string, html?: string, replyTo?: string) {
+async function sendMail(projectId: string | null, to: string[], subject: string, text: string, html?: string, replyTo?: string, cc?: string[]) {
   let error: string | null = null;
   try {
     if (!env("SMTP_HOST")) fail("Nincs beállítva SMTP (SMTP_HOST secret hiányzik).");
@@ -318,11 +319,11 @@ async function sendMail(projectId: string | null, to: string[], subject: string,
     });
     await transport.sendMail({
       from: { name: s?.brand ?? "Pályázatsegítő", address: env("MAIL_FROM") },
-      to, replyTo, subject, text, html,
+      to, cc, replyTo, subject, text, html,
     });
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
   }
-  await db.from("mail_log").insert({ project_id: projectId, recipients: to.join(", "), subject, error });
+  await db.from("mail_log").insert({ project_id: projectId, recipients: [...to, ...(cc ?? []).map((a) => `másolat: ${a}`)].join(", "), subject, error });
   if (error) fail(`E-mail hiba: ${error}`);
 }

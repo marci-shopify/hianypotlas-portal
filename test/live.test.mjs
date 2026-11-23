@@ -67,7 +67,7 @@ const created = [];
 try {
   // ── ideiglenes admin (service kulccsal; az igazi admin fiókhoz nem nyúlunk) ──
   adminId = need(await svc.auth.admin.createUser({ email: `${adminName}@${domain}`, password: adminPw, email_confirm: true })).user.id;
-  need(await svc.from("profiles").insert({ id: adminId, role: "admin", username: adminName, name: "Teszt Admin" }));
+  need(await svc.from("profiles").insert({ id: adminId, role: "admin", username: adminName, name: "Teszt Admin", notify_email: "delivered+admin@resend.dev" }));
   const admin = await login(adminName, adminPw);
 
   // ── admin: ügyfelek + projektek ──
@@ -124,6 +124,8 @@ try {
   await fails("A levelet küld a function-nel (nyílt levéltovábbítás ellen)", fn(ca, "send_credentials", { id: b, to: "valaki@example.com", text: "x" }));
   // Resend tesztcímek (nem kézbesítenek valódi postafiókba); az „s” betűs cím a régi, backslash nélküli regex ellen is őr.
   ok((await fn(admin, "send_credentials", { id: b, to: ["delivered@resend.dev", "delivered+masodik@resend.dev"], text: "teszt" })).ok, "admin két címre küld belépési adatot");
+  const logRow = need(await svc.from("mail_log").select("recipients, error").order("id", { ascending: false }).limit(1).single());
+  ok(!logRow.error && logRow.recipients.includes("másolat: delivered+admin@resend.dev"), "a belépési levél másolata az admin címére megy");
   await assert.rejects(fn(admin, "send_credentials", { id: b, to: ["a@b.hu", "c@d.hu", "e@f.hu"], text: "x" }), /Érvénytelen/);
   await fails("névtelen levelet küld a function-nel", fn(browser(), "send_credentials", { id: b, to: "valaki@example.com", text: "x" }));
   await fails("névtelen hívja a function-t", fn(browser(), "delete_file", { id: fileB }));

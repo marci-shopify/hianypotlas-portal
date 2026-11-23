@@ -738,7 +738,7 @@ function credentialsDialog(client, password, then) {
   const to = h("input", { type: "email", name: "to", value: client.email, placeholder: "ugyfel@pelda.hu", autocomplete: "off" });
   const to2 = h("input", { type: "email", name: "to2", value: client.email2 || "", placeholder: "nem kötelező", autocomplete: "off" });
   modal("Belépési adatok", (close) => [
-    h("p", { class: "muted" }, "Ez a levél megy az ügyfélnek – küldés előtt átírható. A jelszó később nem jeleníthető meg újra (új viszont bármikor adható)."),
+    h("p", { class: "muted" }, "Ez a levél megy az ügyfélnek – küldés előtt átírható. A jelszó később nem jeleníthető meg újra (új viszont bármikor adható)." + (me.notify_email ? ` Másolatot kap: ${me.notify_email}.` : "")),
     field("A levél szövege", letter),
     h("div", { class: "two" }, field("Címzett e-mail-címe", to), field("Második címzett", to2)),
     h("div", { class: "row end actions" },
