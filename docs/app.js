@@ -688,7 +688,7 @@ async function clientsView() {
       h("div", { class: "row small" },
         h("button", { class: "btn quiet", onclick: () => newProjectDialog(c.id) }, "Új projekt"),
         h("button", { class: "btn quiet", onclick: () => clientDialog(c, refresh) }, "Szerkesztés"),
-        h("button", { class: "btn quiet", onclick: () => resetPassword(c) }, "Új jelszó"),
+        h("button", { class: "btn quiet", onclick: () => resetPassword(c) }, "Belépési adatok elküldése"),
         h("button", { class: "btn danger", onclick: () => deleteClient(c) }, "Törlés")))))
       : h("div", { class: "empty" }, h("strong", {}, "Még nincs ügyfél"), "Az „Új ügyfél” gombbal vehet fel egyet."),
   ];
@@ -719,9 +719,10 @@ function clientDialog(c, then) {
 }
 
 function resetPassword(c) {
-  formModal(`Új jelszó – ${c.name}`, [
+  formModal(`Belépési adatok – ${c.name}`, [
+    h("p", { class: "muted" }, "A jelszót titkosítva tároljuk, ezért a régit nem tudjuk elküldeni: új jelszót kap, a következő lépésben pedig átnézheti és elküldheti a levelet."),
     field("Új jelszó", h("input", { type: "text", name: "password", required: true, minlength: 8, value: genPassword(), autocomplete: "off" }), "A régi jelszó azonnal érvényét veszti."),
-  ], "Jelszó beállítása", async (v) => {
+  ], "Tovább a levélhez", async (v) => {
     await api("update_client", { id: c.id, password: v.password });
     credentialsDialog({ id: c.id, name: c.name, username: c.username, email: c.notify_email || "" }, v.password, () => {});
   });

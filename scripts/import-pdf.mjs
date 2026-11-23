@@ -1,7 +1,7 @@
 // Projekt létrehozása egy hiánypótlási felszólítás PDF-jéből (ugyanaz a felismerő, mint a felületen: docs/hp-parse.js).
 //   node scripts/import-pdf.mjs <felszolitas.pdf> "<Ügyfél neve>" [felhasználónév]
 // Ha az ügyfél (név vagy felhasználónév szerint) még nincs meg, létrehozza – e-mail-cím és levél NÉLKÜL.
-// Belépési adatot az admin a felületen ad: Ügyfelek → „Új jelszó” → a levél ott elküldhető.
+// Belépési adatot az admin a felületen ad: Ügyfelek → „Belépési adatok elküldése” → a levél ott elküldhető.
 // Az ügyfél semmilyen e-mailt nem kap: értesítés csak a projekt oldalán az „Értesítés küldése” gombbal megy.
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -31,7 +31,7 @@ const slug = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCas
 const username = (wantUser || slug(clientName)).toLowerCase();
 let client = need(await db.from("profiles").select("id, name").eq("role", "client").or(`username.eq.${username},name.eq."${clientName.replaceAll('"', "")}"`).limit(1).maybeSingle());
 if (!client) {
-  const password = randomBytes(18).toString("base64url");   // senki nem látja; az admin „Új jelszó”-val ad valódit
+  const password = randomBytes(18).toString("base64url");   // senki nem látja; az admin „Belépési adatok elküldése” gombbal ad valódit
   const { data, error } = await db.auth.admin.createUser({ email: `${username}@portal.local`, password, email_confirm: true });
   if (error) throw error;
   need(await db.from("profiles").insert({ id: data.user.id, role: "client", username, name: clientName }));

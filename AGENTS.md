@@ -275,7 +275,7 @@ a portál nem használja; a Resendben „Failed” bejegyzésként maradt.)
 
 **Új admin vagy elfelejtett admin-jelszó.** `node scripts/setup.mjs admin <felhasználónév> "<Név>"`.
 
-**Ügyfél elfelejtette a jelszavát.** Az admin az Ügyfelek oldalon „Új jelszó”-t ad; nincs önkiszolgáló
+**Ügyfél elfelejtette a jelszavát.** Az admin az Ügyfelek oldalon „Belépési adatok elküldése” gombbal új jelszót ad (és a levelet onnan el is küldheti); nincs önkiszolgáló
 jelszó-visszaállítás (szándékosan: a fiókokhoz nem tartozik ellenőrzött e-mail-cím).
 
 **Átköltöztetés másik Supabase-fiókba** (pl. a vállalkozás saját nevére). Vagy a projekt átadása az
