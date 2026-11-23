@@ -721,10 +721,13 @@ function clientDialog(c, then) {
 function resetPassword(c) {
   formModal(`Belépési adatok – ${c.name}`, [
     h("p", { class: "muted" }, "A jelszót titkosítva tároljuk, ezért a régit nem tudjuk elküldeni: új jelszót kap, a következő lépésben pedig átnézheti és elküldheti a levelet."),
+    h("div", { class: "two" },
+      field("Címzett e-mail-címe", h("input", { type: "email", name: "email", required: true, value: c.notify_email || "", autocomplete: "off" })),
+      field("Második címzett (nem kötelező)", h("input", { type: "email", name: "email2", value: c.notify_email2 || "", autocomplete: "off" }))),
     field("Új jelszó", h("input", { type: "text", name: "password", required: true, minlength: 8, value: genPassword(), autocomplete: "off" }), "A régi jelszó azonnal érvényét veszti."),
   ], "Tovább a levélhez", async (v) => {
     await api("update_client", { id: c.id, password: v.password });
-    credentialsDialog({ id: c.id, name: c.name, username: c.username, email: c.notify_email || "", email2: c.notify_email2 || "" }, v.password, () => {});
+    credentialsDialog({ id: c.id, name: c.name, username: c.username, email: v.email.trim(), email2: v.email2.trim() }, v.password, () => {});
   });
 }
 
