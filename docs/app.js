@@ -713,7 +713,7 @@ function clientDialog(c, then) {
       then(c.id);
     } else {
       const { id } = await api("create_client", v);
-      credentialsDialog({ id, name: v.name.trim(), username: v.username.trim().toLowerCase(), email: v.notify_email.trim() }, v.password, () => then(id));
+      credentialsDialog({ id, name: v.name.trim(), username: v.username.trim().toLowerCase(), email: v.notify_email.trim(), email2: v.notify_email2.trim() }, v.password, () => then(id));
     }
   });
 }
@@ -724,7 +724,7 @@ function resetPassword(c) {
     field("Új jelszó", h("input", { type: "text", name: "password", required: true, minlength: 8, value: genPassword(), autocomplete: "off" }), "A régi jelszó azonnal érvényét veszti."),
   ], "Tovább a levélhez", async (v) => {
     await api("update_client", { id: c.id, password: v.password });
-    credentialsDialog({ id: c.id, name: c.name, username: c.username, email: c.notify_email || "" }, v.password, () => {});
+    credentialsDialog({ id: c.id, name: c.name, username: c.username, email: c.notify_email || "", email2: c.notify_email2 || "" }, v.password, () => {});
   });
 }
 
@@ -733,21 +733,24 @@ function credentialsDialog(client, password, then) {
   const letter = h("textarea", { class: "letter", "aria-label": "A levél szövege", maxlength: 5000 },
     `Tisztelt ${client.name}!\n\nA hiánypótláshoz szükséges dokumentumokat az alábbi oldalon tudja feltölteni:\n${location.origin}${location.pathname}\n\nFelhasználónév: ${client.username}\nJelszó: ${password}\n\nAz első belépéskor meg kell adnia egy e-mail-címet – erre küldünk értesítést, ha üzenetet írunk, vagy valamit javítani kell.\n\nÜdvözlettel:\n${brand}`);
   const to = h("input", { type: "email", name: "to", value: client.email, placeholder: "ugyfel@pelda.hu", autocomplete: "off" });
+  const to2 = h("input", { type: "email", name: "to2", value: client.email2 || "", placeholder: "nem kötelező", autocomplete: "off" });
   modal("Belépési adatok", (close) => [
     h("p", { class: "muted" }, "Ez a levél megy az ügyfélnek – küldés előtt átírható. A jelszó később nem jeleníthető meg újra (új viszont bármikor adható)."),
     field("A levél szövege", letter),
-    field("Címzett e-mail-címe", to),
+    h("div", { class: "two" }, field("Címzett e-mail-címe", to), field("Második címzett", to2)),
     h("div", { class: "row end actions" },
       h("button", { class: "btn quiet", onclick: (ev) => run(ev.target, async () => { await navigator.clipboard.writeText(letter.value); toast("Vágólapra másolva."); }) }, "Szöveg másolása"),
       h("button", { class: "btn", onclick: () => { close(); then(); } }, "Bezárás"),
       h("button", {
         class: "btn primary", onclick: (ev) => run(ev.target, async () => {
-          const email = to.value.trim();
+          const email = to.value.trim(), email2 = to2.value.trim();
           if (!EMAIL.test(email)) { to.focus(); throw new Error("Adja meg az ügyfél e-mail-címét."); }
+          if (email2 && !EMAIL.test(email2)) { to2.focus(); throw new Error("A második e-mail-cím hibás."); }
           if (!letter.value.trim()) { letter.focus(); throw new Error("A levél szövege üres."); }
-          await api("send_credentials", { id: client.id, to: email, text: letter.value });
+          const list = [email, email2].filter(Boolean);
+          await api("send_credentials", { id: client.id, to: list, text: letter.value });
           ev.target.textContent = "✓ Elküldve"; ev.target.classList.replace("primary", "done");
-          toast(`A levél elment ide: ${email}`);
+          toast(`A levél elment ide: ${list.join(", ")}`);
         }),
       }, "E-mail küldése")),
   ], true);

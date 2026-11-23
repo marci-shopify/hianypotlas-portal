@@ -122,6 +122,9 @@ try {
   await fails("A törli B projektjét a function-nel", fn(ca, "delete_project", { id: pb }));
   await fails("A törli B fájlját a function-nel", fn(ca, "delete_file", { id: fileB }));
   await fails("A levelet küld a function-nel (nyílt levéltovábbítás ellen)", fn(ca, "send_credentials", { id: b, to: "valaki@example.com", text: "x" }));
+  // Resend tesztcímek (nem kézbesítenek valódi postafiókba); az „s” betűs cím a régi, backslash nélküli regex ellen is őr.
+  ok((await fn(admin, "send_credentials", { id: b, to: ["delivered@resend.dev", "delivered+masodik@resend.dev"], text: "teszt" })).ok, "admin két címre küld belépési adatot");
+  await assert.rejects(fn(admin, "send_credentials", { id: b, to: ["a@b.hu", "c@d.hu", "e@f.hu"], text: "x" }), /Érvénytelen/);
   await fails("névtelen levelet küld a function-nel", fn(browser(), "send_credentials", { id: b, to: "valaki@example.com", text: "x" }));
   await fails("névtelen hívja a function-t", fn(browser(), "delete_file", { id: fileB }));
   const badSecret = await fetch(`${url}/functions/v1/portal`, { method: "POST", headers: { "Content-Type": "application/json", "x-notify-secret": "rossz" }, body: JSON.stringify({ action: "notify", project_id: pa, side: "client" }) });

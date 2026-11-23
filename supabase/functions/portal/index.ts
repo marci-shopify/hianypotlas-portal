@@ -130,16 +130,18 @@ async function updateClientUser(b: { id: string; name?: string; notify_email?: s
 
 // A belépési adatok elküldése az ügyfélnek. A szöveget az admin a felületen látja és szerkeszti (benne a jelszó,
 // amit csak az ő böngészője ismer); mi csak továbbítjuk. A levél tartalmát NEM naplózzuk, csak a címzettet és a tárgyat.
-async function sendCredentials(b: { id: string; to?: string; text?: string }, replyTo: string | null) {
+async function sendCredentials(b: { id: string; to?: string | string[]; text?: string }, replyTo: string | null) {
   await clientOnly(b.id);
-  const to = (b.to ?? "").trim();
+  // Egy vagy két címzett (az ügyfél két értesítési címe).
+  const to = [...new Set((Array.isArray(b.to) ? b.to : [b.to ?? ""]).map((s) => String(s).trim().toLowerCase()).filter(Boolean))];
   const text = (b.text ?? "").trim();
-  if (!/^[^@s]+@[^@s]+.[^@s]+$/.test(to)) fail("Érvénytelen e-mail-cím.");
+  if (!to.length || to.length > 2 || !to.every((a) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a))) fail("Érvénytelen e-mail-cím.");
   if (!text || text.length > 5000) fail("A levél szövege üres vagy túl hosszú.");
   const html = `<div style="font-family:Georgia,serif;max-width:560px;margin:0 auto;color:#14251f;line-height:1.55;white-space:pre-line">${esc(text)}</div>`;
-  await sendMail(null, [to], "Belépési adatok a hiánypótláshoz", text, html, replyTo ?? undefined);
+  await sendMail(null, to, "Belépési adatok a hiánypótláshoz", text, html, replyTo ?? undefined);
   // Ha az ügyfélnek még nincs értesítési címe, ez lesz az (így az első belépéskor már nem kell megadnia).
-  await db.from("profiles").update({ notify_email: to }).eq("id", b.id).is("notify_email", null);
+  await db.from("profiles").update({ notify_email: to[0] }).eq("id", b.id).is("notify_email", null);
+  if (to[1]) await db.from("profiles").update({ notify_email2: to[1] }).eq("id", b.id).is("notify_email2", null);
   return { ok: true };
 }
 
