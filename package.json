@@ -3,9 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/rls.test.mjs",
+    "test": "node test/rls.test.mjs && node test/beta.test.mjs",
     "serve": "npx --yes serve docs -l 5173",
-    "test:live": "node test/live.test.mjs"
+    "test:live": "node test/live.test.mjs",
+    "test:beta": "node test/beta-live.test.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.2.17",

@@ -55,17 +55,21 @@ funkciót építesz, először a szabályt írd meg SQL-ben és tedd tesztbe, cs
 | `docs/app.js` | A teljes felület (belépés, projektlista, projekt nézet, ügyfelek, beállítások, ügyfél-bemutató). |
 | `docs/hp-parse.js` | A hiánypótlási felszólítás (PDF) pontjainak felismerése. Böngésző és Node közös kódja. |
 | `docs/img/henrietta.jpg` | A tanácsadó fotója (192 px, kis méretben jelenik meg – a forrás nem nagy felbontású). |
+| `docs/beta.js`, `beta.css` | **Béta pontozó** felülete. Külön modul: csak akkor töltődik be, ha az admin bekapcsolta és megnyitja a „Pontozó” fület. Lásd 13. pont. |
 | `docs/config.js` | Supabase URL + nyilvános kulcs + `authDomain`. A `scripts/setup.mjs` tölti ki. |
 | `docs/vendor/` | `supabase.js`, `jszip.min.js` és `pdfjs/` (pdfjs-dist 4.10.38, csak adminnál töltődik be) bemásolva az npm-csomagból (nincs CDN-függés). |
 | `supabase/migrations/*.sql` | A teljes séma: táblák, RLS, triggerek, RPC-k, Storage policy-k, cron. |
 | `supabase/functions/portal/index.ts` | Az egyetlen Edge Function (Deno). |
-| `supabase/config.toml` | Csak annyi, hogy a function `verify_jwt = false` (saját maga ellenőriz). |
+| `supabase/functions/beta/` | A béta pontozó külön Edge Functionje: `index.ts` (kapu), `check.js` (az ügynök munkájának visszamérése), `tasks.js` (az ügynöknek kiadott útmutató). Lásd 13. pont. |
+| `supabase/config.toml` | Csak annyi, hogy a két function `verify_jwt = false` (saját maguk ellenőriznek). |
 | `scripts/sql.mjs` | SQL futtatása az éles adatbázison a Management API-n át. |
 | `scripts/setup.mjs` | Secretek, értesítés-bekötés, auth-beállítás, `config.js`; admin fiók. |
 | `scripts/import-pdf.mjs` | Projekt egy felszólítás-PDF-ből: `node scripts/import-pdf.mjs <pdf> "<Ügyfél neve>" [felhasználónév]`. Meglévő ügyfelet név/felhasználónév szerint megtalál, különben létrehozza – e-mail-cím és levél nélkül. |
 | `test/parse.test.mjs` | A PDF-felismerő próbája: `node test/parse.test.mjs <pdf> [várt pontszám]` (valódi ügyfél-PDF nem kerülhet a repóba). |
 | `test/rls.test.mjs` | Biztonsági önteszt beágyazott Postgresen (PGlite). Hálózat nem kell hozzá. |
 | `test/live.test.mjs` | Végponttól végpontig teszt az éles backenden, eldobható tesztfiókokkal. |
+| `test/beta.test.mjs`, `beta.fixture.mjs` | A béta pontozó ellenőrző magjának és a minősítés-számításnak a próbája (helyi, az `npm test` része). |
+| `test/beta-live.test.mjs` | A béta ügynök-kapu élő próbája (`npm run test:beta`), „teszt-” sorokkal, maga után takarít. |
 | `.github/workflows/keepalive.yml` | Napi ping, hogy az ingyenes Supabase projekt ne álljon le. |
 | `.env` | Helyi titkok. **Nincs a repóban**, lásd 7. pont. |
 
@@ -208,6 +212,7 @@ oldalán látja figyelmeztetésként, a saját hiányzó címére pedig a projek
 npm install                 # egyszer
 npm test                    # biztonsági önteszt (helyi, ~3 mp) – MINDEN séma-változtatás után
 npm run test:live           # éles végponttól végpontig teszt (~1,5 perc, maga után takarít)
+npm run test:beta           # a béta pontozó ügynök-kapujának élő próbája (~20 mp, maga után takarít)
 npm run serve               # a docs/ kiszolgálása http://localhost:5173 címen
 
 node scripts/sql.mjs supabase/migrations/<fájl>.sql      # migráció futtatása élesben
@@ -217,6 +222,7 @@ node scripts/setup.mjs admin <felhasználónév> "<Név>"     # admin létrehoz�
 
 # Edge Function telepítése (Docker nem kell):
 SUPABASE_ACCESS_TOKEN=… npx supabase functions deploy portal --remote=ubuslaqntdnqscsaisqr --use-api --yes
+# A béta pontozó functionje ugyanígy, `portal` helyett `beta` névvel (a két function független, külön települ).
 # Típusellenőrzés telepítés előtt (a --no-config kell, különben a gyökér package.json megzavarja):
 cd supabase/functions/portal && deno check --no-config index.ts
 ```
@@ -302,6 +308,9 @@ az új projektbe nem kerülnek át maguktól.
 | Toast láthatóságának tesztelése | `elementFromPoint` átugorja (`pointer-events: none`) | Azt ellenőrizd, hogy a nyitott dialog gyereke és a képernyőn van |
 | `deno check` hibával tér vissza | A `functions deploy` ettől még feltölti a kódot | A típusellenőrzést külön futtasd és nézd meg, mielőtt telepítesz |
 | Storage `remove()` jogosultság nélkül | 200-at ad üres listával, hibát nem | Törlés után ellenőrizd, hogy az objektum tényleg eltűnt-e |
+| PDF-ből kinyert szöveg összehasonlítása | A pdf.js a szavakba szóközt tesz („va gy”, „minő sül”), a sorok közé lábjegyzetszám ékelődik | Csak betűkön és számokon hasonlíts (`norm()` a `check.js`-ben); idézetnél `[…]` a beékelődés helyén |
+| Supabase-js importálása a repón kívüli scriptből | `dist/module/index.js` nem létezik | Az ESM belépési pont `dist/index.mjs` |
+| Ablakméret állítása automatizált Chrome-ban | Az `innerWidth` nem követi | Azonos eredetű `<iframe>` a kívánt szélességgel, abban mérj |
 | Resend API-kulcs listázásra | 401 „restricted to only send emails” (a kulcs csak küldésre jó) | A kézbesítést a Resend felületén (Emails) nézd meg |
 
 ## 10. Ismert korlátok
@@ -345,3 +354,71 @@ emelést vagy szerző-hamisítást nem talált. Amit talált, és ami lett vele:
   az ügyfelek dokumentumairól nincs mentés az ingyenes csomagban.
 - Ne küldj valódi ügyfélnek tesztlevelet: a tesztek „teszt-” előtagú fiókokkal és a `TEST_EMAIL` címmel
   dolgoznak, ezt tartsd meg.
+
+## 13. Béta: pályázati pontozó (2026-11-24)
+
+**Mire való.** A tanácsadó feltölti a megjelent felhívást (PDF), az AI-ügynöke (Codex) elkészíti a felhívás
+*kivonatát* (minden jogosultsági feltétel, kizáró ok, vállalás, költségszabály + a teljes pontozótábla), majd
+vállalkozásonként *értékelést* ad: melyik feltétel teljesül, melyik pontozási szint áll. A korábbi, Excelben
+gyártott pontozókat váltja ki. **Csak admin látja**, és csak ha a Beállítások → „Béta funkciók” kapcsoló be van
+kapcsolva (`settings.beta`); az ügyfelek felületén semmi nem változik.
+
+**Miért így (a kiinduló hiba).** Egy AI a GINOP Plusz-2.1.3-24 felhíváshoz Excel-pontozót gyártott, és a „legalább 1
+fő női munkavállaló” feltételt egy ellenőrzőlista aljára tette sima vállalásként, a pontozóban pedig 0/5 pontos sorként
+kezelte – miközben a felhívás pontozótáblája (66. oldal) erre a sorra pont helyett azt írja: „Jogosulatlan”. A rendszer
+ezért **nem hiszi el, amit az ügynök állít, hanem visszaméri** (`supabase/functions/beta/check.js`):
+
+1. *Minden idézetet megkeres a feltöltött szövegben.* Az oldalszámot a szerver adja az idézet helye alapján, nem az
+   ügynök. Ami nincs benne szó szerint a felhívásban, az hiba.
+2. *Lefedettség.* A szerver kigyűjti a felhívás minden „kötelező hangú” mondatát (legalább, legfeljebb, kizárólag,
+   vállalja, köteles, nem haladhatja meg …; a 213-as felhívásban 308 ilyen van). Mindegyikre hivatkoznia kell egy
+   tétel idézetének, vagy az ügynöknek indokkal el kell vetnie (az elvetéseket a tanácsadó látja).
+3. *Kizáró hangú mondatot csak kizáró tétel fedhet le.* „Jogosulatlan”, „elutasít”, „nem nyújtható”, „nem jogosult”
+   mondatot csak `"kizaro": true` feltétel vagy `"jogosulatlan": true` pontozási szint fedhet. Ez fogja meg a fenti hibát.
+4. *A pontozótábla számai egyeznek* (szintek ↔ szempont ↔ csoport ↔ összesen), és jogosultsági feltétel / kizáró ok
+   nem jelölhető nem kizárónak.
+5. *Értékelésnél nincs találgatás.* Minden tételre kell válasz forrással; `nincs_adat` forrással nem lehet dönteni,
+   csak kérdést feltenni; nyilvános forrásnál kötelező a hivatkozás.
+
+A végső minősítést (jogosulatlan / nem éri el a pontküszöböt / még nem dönthető el / megfelel) és a pontokat **mindig a
+portál számolja** (`verdict()` a `docs/beta.js`-ben), nem az ügynök.
+
+**Folyamat.**
+
+```
+Tanácsadó: Pontozó fül → Új felhívás (PDF-ek) ── a böngésző kinyeri a szöveget oldalanként → beta_calls.docs
+           → kimásolja a promptot az ügynökének
+Ügynök:    GET  …/functions/v1/beta?t=<kód>   → a feladat: útmutató + a felhívás teljes szövege (text/plain)
+           POST …/functions/v1/beta?t=<kód>   → a kivonat JSON-ja; a válasz: hibák + lefedetlen mondatok
+           … javít és újraküld, amíg "kesz": true
+Tanácsadó: átnézi a kivonatot; tételenként megjegyzést írhat az AI-nak (a következő futás kötelező javításként kapja)
+           → + Vállalkozás értékelése (név, adószám, alapadatok) → másik prompt az ügynöknek
+Ügynök:    GET/POST ugyanígy, az értékelés kódjával → feltételenként állapot, szempontonként szint, kérdések
+Tanácsadó: válaszol a nyitott kérdésekre, felülbírálhat bármit (kézi döntés) → újrafuttatás
+```
+
+- A kimásolható prompt rövid, és csak a címet + a kódot tartalmazza; **a teljes útmutató a `tasks.js`-ben van**, így
+  javítható anélkül, hogy a tanácsadónak bármit újra be kellene másolnia. Ami ott szabály, azt a `check.js` ki is
+  kényszeríti – a kettő együtt változzon, és a `test/beta.test.mjs` kövesse.
+- Ha az ügynök nem éri el az internetet: a prompt alatt „Feladat letöltése” (ugyanaz a szöveg fájlként) és „Eredmény
+  beillesztése” (ugyanaz az ellenőrzés fut, a hibalista visszamásolható az ügynöknek).
+- **A kód** (`agent_token`, `f…` a felhíváshoz, `e…` az értékeléshez): véletlen, 64 hexa karakter, egyetlen sorhoz
+  ad hozzáférést, 30 napig él; a felület megnyitáskor megújítja, ha egy napon belül lejárna. A function
+  `verify_jwt = false`, a kódot vagy az admin JWT-jét maga ellenőrzi. A táblákhoz az ügynök közvetlenül nem fér hozzá.
+
+**Adatok.** `beta_calls` (title, docs = `[{name, pages:[…]}]`, catalog, review, notes, agent_token) és `beta_evals`
+(call_id, company, tax_no, facts, result, review, manual, agent_token). RLS: csak admin. A feltöltött PDF-et **nem**
+tároljuk, csak a kinyert szövegét (szkennelt PDF-ből nincs szöveg → a felület jelzi). A `manual` a tanácsadó döntései
+és válaszai (`{feltetelek: {id: {allapot, valasz}}, pontok: {id: {szint, valasz}}}`); ezek erősebbek az ügynök
+válaszánál, és a következő futáskor az ügynök tényként kapja meg őket.
+
+**Kimérve (2026-11-24).** A valódi GINOP Plusz-2.1.3-24 felhívás (94 oldal, 254 ezer karakter) a felületen feltöltve,
+a feladat az ügynök-kapun lekérve (270 kB), egy kézzel írt próbakivonat 12 idézetéből 12-t megtalált (a „va gy”
+szóköz-hibával együtt), a 66. oldali „Jogosulatlan” mondat nem kizáró tétellel lefedetlen maradt, kizáróval lefedett.
+A felület 390 / 1280 / 1366 / 1536 px szélesen vízszintes görgetés nélkül. **Nem kimért:** valódi Codex-ügynök teljes
+futása (hány kör kell a 308 mondat rendezéséhez, mennyire fegyelmezetten követi az útmutatót) – ez az első éles
+használatkor derül ki; ha az ügynök elakad vagy tömegesen elvet, a `tasks.js` útmutatóját kell élesíteni.
+
+**Ismert korlátok.** Nincs képlet-motor: számításos szempontnál (arány, növekedés) az ügynök számol, a tanácsadó a
+szintre kattintva bírálhatja felül. Nincs Excel/PDF export. A kivonatot a felületen nem lehet kézzel szerkeszteni, csak
+megjegyzéssel visszaadni az ügynöknek. A kód nem vonható vissza külön gombbal (törlés + újrafeltöltés, vagy lejárat).

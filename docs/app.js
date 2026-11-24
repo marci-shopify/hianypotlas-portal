@@ -14,6 +14,8 @@ const MAX_FILE = 50 * 1024 * 1024; // a Storage bucket limitje is ennyi
 const STATUS = { hianyzik: "Hiányzik", feltoltve: "Ellenőrzésre vár", javitando: "Javítandó", elfogadva: "Rendben" };
 let me = null;                       // a belépett felhasználó profilja
 let brand = "Pályázatsegítő";
+let beta = false;                     // béta funkciók (Pontozó fül) – az admin kapcsolja a Beállításokban
+const V = new URL(import.meta.url).searchParams.get("v") || "";   // verzió-paraméter a béta modul gyorsítótára ellen
 let renderNo = 0;                    // versenyhelyzet ellen: csak a legutolsó render írhat a DOM-ba
 const openState = new Map();         // pont id → nyitva van-e (újrarajzolás után megmarad)
 const drafts = new Map();            // pont id → félbehagyott üzenet
@@ -182,8 +184,9 @@ async function loadMe() {
 
 async function boot() {
   try {
-    const s = need(await sb.from("settings").select("brand").maybeSingle());
+    const s = need(await sb.from("settings").select("*").maybeSingle());
     if (s?.brand) brand = s.brand;
+    beta = !!s?.beta;
     document.title = brand;
     await loadMe();
   } catch (e) {
@@ -208,6 +211,7 @@ async function render(keepScroll) {
       const main = route === "p" && id ? await projectView(id)
         : route === "ugyfelek" && admin ? await clientsView()
         : route === "beallitasok" ? await settingsView()
+        : route === "pontozo" && admin && beta ? await betaView(location.hash.split("/").slice(2))
         : await homeView();
       if (!main) return; // a nézet átirányított
       view = [header(route), h("main", { class: "wrap" + (narrow ? " narrow" : "") }, main)];
@@ -246,6 +250,12 @@ function tour(step = 0) {
 }
 const refresh = () => render(true);
 
+// Béta: a Pontozó külön modul (beta.js + beta.css), csak akkor töltődik be, ha az admin bekapcsolta és megnyitja.
+async function betaView(parts) {
+  const mod = await import(`./beta.js?v=${V}`);
+  return mod.betaView({ sb, cfg, h, need, run, toast, modal, formModal, confirmBox, field, fmtTime, refresh, v: V }, parts);
+}
+
 function header(route) {
   const link = (href, text, key) => h("a", { href, "aria-current": route === key || (!route && !key) || (route === "p" && !key) ? "page" : null }, text);
   return h("header", { class: "top" }, h("div", { class: "inner" },
@@ -253,6 +263,7 @@ function header(route) {
     h("nav", {},
       link("#/", "Projektek", undefined),
       me.role === "admin" && link("#/ugyfelek", "Ügyfelek", "ugyfelek"),
+      me.role === "admin" && beta && link("#/pontozo", "Pontozó (béta)", "pontozo"),
       link("#/beallitasok", "Beállítások", "beallitasok"),
       me.role === "client" && h("button", { onclick: () => tour() }, "Súgó"),
       h("button", { onclick: async () => { await sb.auth.signOut(); me = null; location.hash = "#/"; render(); } }, "Kilépés"))));
@@ -803,6 +814,17 @@ async function settingsView() {
           need(await sb.from("settings").update({ brand: v.brand.trim() }).eq("id", true));
           brand = v.brand.trim(); document.title = brand; toast("Mentve."); refresh();
         })),
+
+    admin && h("section", { class: "card" }, h("h2", {}, "Béta funkciók"),
+      h("label", { class: "switch" },
+        h("input", { type: "checkbox", checked: beta || null, onchange: (ev) => run(ev.target, async () => {
+          const on = ev.target.checked;
+          const { error } = await sb.from("settings").update({ beta: on }).eq("id", true);
+          if (error) { ev.target.checked = !on; throw error; }
+          beta = on; toast(on ? "Bekapcsolva: a menüben megjelent a „Pontozó (béta)” fül." : "Kikapcsolva."); refresh();
+        }) }),
+        h("span", {}, h("b", {}, "Pályázati pontozó"), h("span", { class: "hint" }, "Felhívás feltöltése, kivonat és vállalkozás-értékelés AI-ügynökkel. Csak Ön látja; az ügyfelek felületén semmi nem változik."))),
+    ),
 
     admin && h("section", { class: "card" }, h("h2", {}, "Kiküldött levelek"),
       log.length ? h("div", { class: "scroll-x" }, h("table", { class: "log" }, log.map((l) => h("tr", {},

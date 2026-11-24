@@ -247,3 +247,21 @@ await as(A, () => denied("A átírja a Teendőt", `update points set instruction
 await as(ADMIN, () => db.query(`update points set instruction = 'Szállítólevél kell' where id = $1`, [ptA2]));
 await as(A, async () => ok((await rows(`select instruction from points where id = $1`, [ptA2]))[0].instruction === "Szállítólevél kell", "A látja a Teendőt"));
 console.log(`OK – Teendő ellenőrzések`);
+
+// ── Béta pontozó (beta_calls, beta_evals, settings.beta): csak admin ──
+const [bc] = await as(ADMIN, () => rows(`insert into beta_calls (title, agent_token) values ('Teszt felhívás', 'f-titok') returning id`));
+await as(ADMIN, () => db.query(`insert into beta_evals (call_id, company) values ($1, 'Minta Kft.')`, [bc.id]));
+for (const [who, uid] of [["A ügyfél", A], ["névtelen", null]]) await as(uid, async () => {
+  await denied(`${who} olvassa a felhívásokat`, `select * from beta_calls`);
+  await denied(`${who} olvassa az értékeléseket`, `select * from beta_evals`);
+  await denied(`${who} felhívást vesz fel`, `insert into beta_calls (title) values ('x')`);
+  await denied(`${who} átírja a kivonatot`, `update beta_calls set catalog = '{}' where id = $1`, [bc.id]);
+  await denied(`${who} töröl értékelést`, `delete from beta_evals`);
+  await denied(`${who} bekapcsolja a bétát`, `update settings set beta = true`);
+});
+await as(ADMIN, async () => {
+  ok((await rows(`select id from beta_evals`)).length === 1, "admin látja az értékelést");
+  ok((await db.query(`update settings set beta = true`)).affectedRows === 1, "admin bekapcsolja a bétát");
+});
+ok((await as(null, () => rows(`select beta from settings`)))[0].beta === true, "a kapcsoló állása olvasható (nem titok)");
+console.log(`OK – béta ellenőrzések (összesen ${tests})`);

@@ -1,0 +1,104 @@
+/* Pályázatsegítő – BÉTA pontozó. A „dosszié” elvet követi (AGENTS.md 4a): a felhívás egy mappa, a feltétel egy lap,
+   színt csak az állapot kap. Csak .bx- előtagú osztályok vannak itt, és a fájl csak a Pontozó fülön töltődik be,
+   így az éles felület kinézetéhez nem ér hozzá. */
+
+.bx-title em { font-size: .5em; color: var(--brass); vertical-align: .55em; margin-left: .15em; }
+.bx-h { margin: 2.4rem 0 .9rem; }
+.bx-h small, .bx-questions h2 small { font: 500 .875rem var(--sans); color: var(--muted); letter-spacing: 0; margin-left: .5rem; }
+.bx-chip { border: 1px dashed rgba(241, 238, 227, .45); cursor: pointer; font: inherit; }
+.bx-hero .facts .bx-chip { background: transparent; }
+
+/* a kimásolható prompt */
+.bx-agent { border-color: var(--forest); border-width: 1.5px; }
+.bx-agent h2 { margin-bottom: .3rem; }
+.bx-prompt { width: 100%; font: .8125rem/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; background: #fff; margin: .2rem 0 .8rem; white-space: pre; overflow: auto; min-height: 9.5em; }
+
+/* ellenőrzés-összesítő: nagy szám + egy sor */
+.bx-check { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .6rem; margin: 0 0 .8rem; }
+.bx-check > div { padding: .8rem 1rem; border: 1px solid var(--line); border-radius: var(--r); background: var(--card); font-size: .8125rem; color: var(--muted); border-top: 3px solid var(--hianyzik); }
+.bx-check > div.good { border-top-color: var(--elfogadva); }
+.bx-check > div.bad { border-top-color: var(--javitando); }
+.bx-check b { display: block; font: 540 1.6rem/1.15 var(--display); color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* oldalcsík: melyik oldalról származik tétel (zöld), hol maradt lefedetlen mondat (piros perem) */
+.bx-strips { display: grid; gap: 4px; margin: 0 0 1.2rem; }
+.bx-strip { display: flex; gap: 2px; height: 18px; }
+.bx-strip span { flex: 1; min-width: 2px; border-radius: 2px; background: rgba(130, 126, 110, .18); }
+.bx-strip .n1 { background: color-mix(in srgb, var(--elfogadva) 40%, transparent); }
+.bx-strip .n2 { background: color-mix(in srgb, var(--elfogadva) 70%, transparent); }
+.bx-strip .n3 { background: var(--elfogadva); }
+.bx-strip .gap { box-shadow: inset 0 0 0 2px var(--javitando); }
+
+/* a felhívás legfontosabb adatai */
+.bx-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap: .6rem; margin: 1.2rem 0 0; }
+.bx-facts > div { position: relative; padding: .8rem 1rem; background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+.bx-facts small { display: block; color: var(--muted); font-size: .75rem; padding-right: 2.5rem; }
+.bx-facts b { display: block; font: 540 1.05rem/1.3 var(--display); overflow-wrap: anywhere; }
+.bx-facts i { position: absolute; top: .75rem; right: .9rem; font: 500 .6875rem var(--sans); color: var(--brass); }
+
+/* szűrők, saját döntés */
+.bx-pills { display: flex; flex-wrap: wrap; gap: .35rem; margin: 0 0 1rem; }
+.bx-pills button { display: inline-flex; align-items: center; gap: .45em; border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: .4em .9em; font-size: .875rem; font-weight: 550; cursor: pointer; color: var(--muted); }
+.bx-pills button:hover { border-color: var(--ink); color: var(--ink); }
+.bx-pills button.on { background: var(--forest); border-color: var(--forest); color: #f6f3ea; }
+.bx-pills i { font: 600 .75rem var(--sans); opacity: .7; font-variant-numeric: tabular-nums; }
+
+/* tétel-lapok */
+.bx-item .no { font-size: 1.05rem; min-width: 2.4em; }
+.bx-item .title { font-size: 1.05rem; }
+.bx-item .desc { max-width: 72ch; }
+.bx-type { font-size: .75rem; color: var(--muted); white-space: nowrap; }
+.bx-quote { margin: .6rem 0; padding: .55rem .9rem; border-left: 3px solid var(--brass); background: var(--soft); border-radius: 0 10px 10px 0; font-size: .875rem; color: #33443c; max-width: 72ch; overflow-wrap: anywhere; }
+.bx-quote cite { display: block; margin-top: .3rem; font: 600 .75rem var(--sans); color: var(--brass); }
+.bx-note { margin: 1rem 0 0; font-weight: 550; color: var(--muted); }
+.bx-note textarea { min-height: 2.6em; margin-top: .3rem; font-weight: 400; color: var(--ink); }
+
+/* pontozótábla */
+.bx-score h3 { display: flex; flex-wrap: wrap; gap: .3rem 1rem; justify-content: space-between; align-items: baseline; font-size: 1.2rem; margin-bottom: .4rem; }
+.bx-score h3 span { font: 600 .875rem var(--sans); color: var(--brass); letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.bx-crit { padding: .9rem 0 .2rem; border-top: 1px solid var(--line); margin-top: .8rem; }
+.bx-crit-h { display: flex; flex-wrap: wrap; gap: .2rem 1rem; justify-content: space-between; align-items: baseline; margin-bottom: .4rem; }
+.bx-crit-h span { font-size: .8125rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bx-levels { list-style: none; margin: 0 0 .6rem; padding: 0; display: grid; gap: 3px; }
+.bx-levels li, .bx-levels.pick button { display: grid; grid-template-columns: 1fr auto; gap: 1rem; align-items: center; padding: .45rem .75rem; border-radius: 10px; background: var(--soft); font-size: .875rem; }
+.bx-levels li > b, .bx-levels button > b { font: 560 1.05rem var(--display); font-variant-numeric: tabular-nums; }
+.bx-levels.pick li { display: block; padding: 0; background: none; }
+.bx-levels.pick button { width: 100%; border: 1.5px solid transparent; text-align: left; cursor: pointer; }
+.bx-levels.pick button:hover { border-color: var(--forest-2); }
+.bx-levels.pick button.on { background: var(--mint); border-color: var(--forest); font-weight: 600; }
+.bx-ai { font: 700 .625rem var(--sans); font-style: normal; margin-left: .6em; padding: .25em .55em; border-radius: 99px; background: var(--forest); color: #f6f3ea; vertical-align: .1em; }
+.bx-ai.me { background: var(--brass); }
+
+/* minősítés a borítón */
+.bx-hero .facts .bx-v { font-weight: 700; background: #f1eee3; color: var(--forest); }
+.bx-hero .facts .bx-v.v-nem, .bx-hero .facts .bx-v.v-pont { background: #ffd9c9; color: #7a2a12; }
+.bx-hero .facts .bx-v.v-kerdes { background: #d6e6f7; color: #1d4670; }
+.bx-hero .facts .bx-v.v-ok { background: var(--mint); color: var(--forest); }
+.bx-hero .ring span { font-size: 1.15rem; white-space: nowrap; }
+.bx-sum { font: 480 1.15rem/1.5 var(--display); max-width: 70ch; margin: 1.2rem 0; }
+.bx-todo { margin: 0; padding-left: 1.3rem; display: grid; gap: .35rem; }
+
+/* nyitott kérdések */
+.bx-questions h2 { margin-bottom: .3rem; }
+.bx-q { display: grid; grid-template-columns: auto auto 1fr; gap: .2rem .8rem; align-items: start; padding: .8rem 0 .2rem; border-top: 1px solid var(--line); }
+.bx-q .no { font: italic 480 1.05rem var(--display); color: var(--brass); min-width: 2.4em; padding-top: .1rem; }
+.bx-q .bx-note { grid-column: 3; margin: 0; color: var(--ink); font-weight: 600; }
+.bx-q .stamp { margin-top: .15rem; }
+
+/* listák, lenyílók */
+.bx-list { margin: .4rem 0; padding-left: 1.2rem; display: grid; gap: .3rem; font-size: .875rem; }
+.bx-list i { font-style: normal; font-weight: 600; color: var(--brass); }
+.bx-more { margin: .6rem 0; padding: .7rem 1rem; border: 1px solid var(--line); border-radius: 14px; background: var(--card); }
+.bx-more summary { cursor: pointer; font-weight: 600; font-size: .9375rem; }
+.bx-eval { text-decoration: none; color: inherit; }
+.bx-eval:hover { border-color: var(--forest-2); }
+.bx-eval .avatar { width: auto; min-width: 44px; aspect-ratio: auto; height: 44px; padding: 0 .7rem; border-radius: 99px; font-size: 1rem; font-variant-numeric: tabular-nums; }
+.bx-two { display: grid; grid-template-columns: 2fr 1fr; gap: 0 1rem; }
+
+@media (max-width: 600px) {
+  .bx-two { grid-template-columns: 1fr; }
+  .bx-q { grid-template-columns: auto 1fr; }
+  .bx-q .bx-note { grid-column: 1 / -1; }
+  .bx-eval .stamp { grid-column: 1 / -1; justify-self: start; }
+  .bx-prompt { font-size: .75rem; }
+}
