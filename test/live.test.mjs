@@ -80,7 +80,7 @@ try {
   await assert.rejects(fn(admin, "create_client", { username: `teszt-a-${run}`, name: "x", password: aPw }), /foglalt/);
   ok(true, "foglalt felhasználónév érthető hibát ad");
 
-  pa = need(await admin.from("projects").insert({ client_id: a, title: `Teszt projekt ${run}`, deadline: "2030-01-15" }).select("id").single()).id;
+  pa = need(await admin.from("projects").insert({ client_id: a, title: `Teszt projekt ${run}`, deadline: "2030-01-15", client_deadline: "2030-01-08" }).select("id").single()).id;
   pb = need(await admin.from("projects").insert({ client_id: b, title: `Teszt B ${run}` }).select("id").single()).id;
   const [pt1, pt2, pt3] = need(await admin.from("points").insert([
     { project_id: pa, position: 1, title: "Cégkivonat" }, { project_id: pa, position: 2, title: "Árajánlatok" }, { project_id: pa, position: 3, title: "Nyilatkozat" },
@@ -95,6 +95,10 @@ try {
   // ── A ügyfél: csak a sajátját látja, feltölt, üzen ──
   let ca = await login(`teszt-a-${run}`, aPw);
   ok(need(await ca.from("projects").select("id")).length === 1, "A csak a saját projektjét látja");
+  const [dl] = need(await ca.from("projects").select("deadline, client_deadline"));
+  ok(dl.deadline === "2030-01-15" && dl.client_deadline === "2030-01-08", "A látja a pályázat és a saját határidejét");
+  need(await ca.from("projects").update({ client_deadline: "2031-01-01" }).eq("id", pa));
+  ok(need(await admin.from("projects").select("client_deadline").eq("id", pa).single()).client_deadline === "2030-01-08", "A nem írhatja át a határidejét");
   ok(need(await ca.from("profiles").select("id")).length === 1, "A csak a saját profilját látja");
   if (TEST_EMAIL) need(await ca.from("profiles").update({ notify_email: TEST_EMAIL }).eq("id", a));
 

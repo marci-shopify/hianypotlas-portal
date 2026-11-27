@@ -80,7 +80,7 @@ mappát tudja ágról kiszolgálni), nem dokumentáció.
 
 ```
 profiles  (id = auth.users.id, role: admin|client, username, name, notify_email, notify_email2)
-   └─ projects  (client_id, title, reference, deadline, archived, source_path/source_name = eredeti felszólítás, *_notify_at, *_notified_at)
+   └─ projects  (client_id, title, reference, deadline = pályázat határideje, client_deadline = ügyfél leadási határideje, archived, source_path/source_name = eredeti felszólítás, *_notify_at, *_notified_at)
          └─ points  (position, title, description, instruction = „Teendő” az ügyfélnek (csak admin írja, kék betűvel látszik, nem üzenet), status, client_unread, admin_unread)
                ├─ files     (path, name, size, uploaded_by, from_admin)
                └─ messages  (author_id, from_admin, body)
@@ -139,6 +139,11 @@ elérte volna. Ha a portál valaha visszakerül közös eredetre, ezt vissza kel
 **Eredeti felszólítás:** `{project_id}/forras/{uuid}-{név}.pdf`. Csak admin tölthet ide (`docs_insert_source` policy), olvasni az admin és a projekt ügyfele tud (`docs_read`). A projekt törlése előtag alapján ezt is viszi.
 
 **Felismerés (`docs/hp-parse.js`):** a leghosszabb 1., 2., 3. … sorozatot keresi; egy pont több soron és oldalhatáron át is tarthat (ha az utolsó sora a jobb margóig ér, az oldal alján lévő élőlábat átugorja, és a következő oldal első bekezdése a folytatás). 140 karakternél hosszabb pontnál rövid cím + a teljes szöveg leírásként. A felület az eredményt MINDIG szerkeszthető szövegként mutatja mentés előtt. Kimérve: a Kincstár KAP kifizetési hiánypótlásán (3 oldal, 10 pont, a 6. pont oldalt vált) hibátlan. Szkennelt (kép) PDF-ből nincs szöveg → a felület ezt jelzi, a pontokat kézzel kell beírni.
+
+**Két határidő (2026-11-27):** `deadline` = a pályázat / hiánypótlás határideje, `client_deadline` = eddig adja le az ügyfél
+a dokumentumokat. Mindkettőt csak az admin írja (Új projekt és „Adatok szerkesztése” ablak, meglévő projektnél is); a projekt
+fejlécében mindkét fél látja (ügyfélnél „Az Ön határideje”, adminnál „Ügyfél határideje”), 3 napon belül kiemelve. A projektlista
+és az értesítő levél továbbra is csak a `deadline`-t mutatja. Kimérve: `npm test`, `test:live` 51/51, felület 390/1280/1366/1536 px.
 
 **Ügyfél-bemutató:** első belépéskor (és a fejléc „Súgó” gombjára) 4 lépéses ablak; a „látta” jelző a böngésző `localStorage`-ében van (`tour-<user id>`), másik eszközön újra megjelenik – ez elfogadott.
 

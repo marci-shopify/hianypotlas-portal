@@ -115,12 +115,15 @@ async function uploadNotice(projectId, file) {
 }
 const pdfInput = (onFile) => h("input", { type: "file", accept: "application/pdf,.pdf", onchange: (ev) => ev.target.files[0] && onFile(ev.target.files[0], ev.target) });
 
-function dueLabel(deadline) {
+function dueLabel(deadline, label = "Határidő") {
   if (!deadline) return null;
   const d = daysLeft(deadline);
   const txt = d > 1 ? `${d} nap van hátra` : d === 1 ? "holnap jár le" : d === 0 ? "ma jár le" : `${-d} napja lejárt`;
-  return h("span", { class: "due" + (d <= 3 ? " soon" : "") }, `Határidő: ${fmtDate(deadline)} · ${txt}`);
+  return h("span", { class: "due" + (d <= 3 ? " soon" : "") }, `${label}: ${fmtDate(deadline)} · ${txt}`);
 }
+const deadlineFields = (p = {}) => h("div", { class: "two" },
+  field("Pályázat határideje", h("input", { type: "date", name: "deadline", value: p.deadline || "" })),
+  field("Ügyfél határideje", h("input", { type: "date", name: "client_deadline", value: p.client_deadline || "" }), "Eddig adjon le mindent. Az ügyfél is látja."));
 const stamp = (status) => h("span", { class: `stamp s-${status}` }, STATUS[status]);
 const segbar = (points) => h("div", { class: "segbar", role: "img", "aria-label": progressText(points) },
   [...points].sort(byPos).map((p) => h("span", { class: `s-${p.status}`, title: `${p.title ?? ""} – ${STATUS[p.status]}`.replace(/^ – /, "") })));
@@ -405,13 +408,13 @@ async function newProjectDialog(presetClientId) {
       clients.map((c) => h("option", { value: c.id }, c.name)))),
     h("p", { class: "small", style: "margin:-.6rem 0 .6rem" }, h("button", { class: "btn quiet", type: "button", onclick: (ev) => { ev.target.closest("dialog").close(); ev.target.closest("dialog").remove(); clientDialog(null, (id) => newProjectDialog(id)); } }, "+ Új ügyfél felvétele")),
     field("Projekt neve", title),
-    h("div", { class: "two" },
-      field("Pályázati azonosító", reference),
-      field("Határidő (nem kötelező)", h("input", { type: "date", name: "deadline" }))),
+    field("Pályázati azonosító", reference),
+    deadlineFields(),
     field("Hiánypótlási pontok", pointsBox, "Soronként egy pont. Később is bővíthető."),
   ], "Létrehozás", async (v) => {
     const proj = need(await sb.from("projects").insert({
-      client_id: v.client_id, title: v.title.trim(), reference: v.reference.trim() || null, deadline: v.deadline || null,
+      client_id: v.client_id, title: v.title.trim(), reference: v.reference.trim() || null,
+      deadline: v.deadline || null, client_deadline: v.client_deadline || null,
     }).select("id").single());
     const pts = parsePoints(v.points);
     if (pts.length) {
@@ -448,7 +451,9 @@ async function projectView(id) {
         h("div", {},
           h("p", { class: "client" }, [admin && project.client.name, project.reference].filter(Boolean).join(" · ") || "Hiánypótlás"),
           h("h1", {}, project.title),
-          h("div", { class: "facts" }, h("span", {}, progressText(points)), dueLabel(project.deadline),
+          h("div", { class: "facts" }, h("span", {}, progressText(points)),
+            dueLabel(project.client_deadline, admin ? "Ügyfél határideje" : "Az Ön határideje"),
+            dueLabel(project.deadline, "Pályázat határideje"),
             project.source_path && h("button", { class: "source", onclick: () => openFile({ path: project.source_path, name: project.source_name || "felszolitas.pdf" }) }, "Eredeti felszólítás (PDF)"))),
         points.length > 0 && h("div", { class: "ring", style: `--p:${Math.round((ok / points.length) * 100)}`, role: "img", "aria-label": `${ok} / ${points.length} pont rendben` },
           h("span", {}, String(ok), h("small", {}, ` / ${points.length}`)))),
@@ -661,11 +666,13 @@ function addPointsDialog(project, points) {
 function editProjectDialog(project) {
   formModal("Projekt adatai", [
     field("Projekt neve", h("input", { type: "text", name: "title", required: true, maxlength: 200, value: project.title })),
-    h("div", { class: "two" },
-      field("Pályázati azonosító", h("input", { type: "text", name: "reference", maxlength: 100, value: project.reference || "" })),
-      field("Határidő", h("input", { type: "date", name: "deadline", value: project.deadline || "" }))),
+    field("Pályázati azonosító", h("input", { type: "text", name: "reference", maxlength: 100, value: project.reference || "" })),
+    deadlineFields(project),
   ], "Mentés", async (v) => {
-    need(await sb.from("projects").update({ title: v.title.trim(), reference: v.reference.trim() || null, deadline: v.deadline || null }).eq("id", project.id));
+    need(await sb.from("projects").update({
+      title: v.title.trim(), reference: v.reference.trim() || null,
+      deadline: v.deadline || null, client_deadline: v.client_deadline || null,
+    }).eq("id", project.id));
     refresh();
   });
 }

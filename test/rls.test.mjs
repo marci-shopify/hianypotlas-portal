@@ -80,6 +80,8 @@ const [pa, pb, ptA, ptA2, ptB] = await as(ADMIN, async () => {
   return [pa, pb, ptA, ptA2, ptB];
 });
 ok((await point(ptA)).client_notify_at, "új pont → ügyfél-értesítés ütemezve");
+await as(ADMIN, () => db.query(`update projects set client_deadline = '2026-12-03' where id = $1`, [pa]));
+await as(A, async () => ok((await rows(`select deadline, client_deadline from projects`))[0]?.client_deadline, "A látja mindkét határidőt"));
 // eredeti felszólítás: csak admin tölthet a {projekt}/forras/ mappába, olvasni a projekt ügyfele is tudja
 await as(ADMIN, () => db.query(`insert into storage.objects (bucket_id, name, owner_id) values ('docs', $1, $2)`, [`${pa}/forras/x-felhivas.pdf`, ADMIN]));
 await as(A, async () => {
@@ -108,6 +110,7 @@ await as(null, async () => {
 const pathA = `${pa}/${ptA}/f1-ceg.pdf`;
 await as(A, async () => {
   ok((await rows(`select id from projects`)).length === 1, "A csak a saját projektjét látja");
+  await denied("A átírja a saját határidejét", `update projects set client_deadline = '2030-01-01' where id = $1`, [pa]);
   ok((await rows(`select id from points`)).length === 2, "A csak a saját pontjait látja");
   ok((await rows(`select id from profiles`)).length === 1, "A csak a saját profilját látja");
   await denied("A olvassa B projektjét", `select * from projects where id = $1`, [pb]);
