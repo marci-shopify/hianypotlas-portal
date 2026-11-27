@@ -121,7 +121,22 @@ function dueLabel(deadline, label = "Határidő") {
   const txt = d > 1 ? `${d} nap van hátra` : d === 1 ? "holnap jár le" : d === 0 ? "ma jár le" : `${-d} napja lejárt`;
   return h("span", { class: "due" + (d <= 3 ? " soon" : "") }, `${label}: ${fmtDate(deadline)} · ${txt}`);
 }
-const deadlineFields = (p = {}) => h("div", { class: "two" },
+// A projekt fejlécében a két határidő nagy csempén. Adminnál a csempe gomb: a projekt adatai ablakot nyitja,
+// a hiányzó határidő helyén „megadás” csempe áll. Az ügyfél csak a beállított határidőket látja.
+function deadlineTiles(project, admin) {
+  const tile = (date, label) => {
+    if (!date && !admin) return null;
+    const d = date && daysLeft(date);
+    const left = !date ? "Kattintson a megadáshoz"
+      : d > 1 ? `${d} nap van hátra` : d === 1 ? "holnap jár le" : d === 0 ? "ma jár le" : `${-d} napja lejárt`;
+    const kids = [h("span", { class: "dl-label" }, label), h("strong", {}, date ? fmtDate(date) : "+ Megadás"), h("span", { class: "dl-left" }, left)];
+    const cls = "dl" + (!date ? " empty" : d <= 3 ? " soon" : "");
+    return admin ? h("button", { class: cls, type: "button", onclick: () => editProjectDialog(project) }, kids) : h("div", { class: cls }, kids);
+  };
+  const tiles = [tile(project.client_deadline, admin ? "Ügyfél határideje" : "Az Ön határideje"), tile(project.deadline, "Pályázat határideje")].filter(Boolean);
+  return tiles.length ? h("div", { class: "deadlines" }, tiles) : null;
+}
+const deadlineFields =(p = {}) => h("div", { class: "two" },
   field("Pályázat határideje", h("input", { type: "date", name: "deadline", value: p.deadline || "" })),
   field("Ügyfél határideje", h("input", { type: "date", name: "client_deadline", value: p.client_deadline || "" }), "Eddig adjon le mindent. Az ügyfél is látja."));
 const stamp = (status) => h("span", { class: `stamp s-${status}` }, STATUS[status]);
@@ -451,9 +466,8 @@ async function projectView(id) {
         h("div", {},
           h("p", { class: "client" }, [admin && project.client.name, project.reference].filter(Boolean).join(" · ") || "Hiánypótlás"),
           h("h1", {}, project.title),
+          deadlineTiles(project, admin),
           h("div", { class: "facts" }, h("span", {}, progressText(points)),
-            dueLabel(project.client_deadline, admin ? "Ügyfél határideje" : "Az Ön határideje"),
-            dueLabel(project.deadline, "Pályázat határideje"),
             project.source_path && h("button", { class: "source", onclick: () => openFile({ path: project.source_path, name: project.source_name || "felszolitas.pdf" }) }, "Eredeti felszólítás (PDF)"))),
         points.length > 0 && h("div", { class: "ring", style: `--p:${Math.round((ok / points.length) * 100)}`, role: "img", "aria-label": `${ok} / ${points.length} pont rendben` },
           h("span", {}, String(ok), h("small", {}, ` / ${points.length}`)))),

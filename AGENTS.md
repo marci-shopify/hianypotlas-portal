@@ -142,7 +142,7 @@ elérte volna. Ha a portál valaha visszakerül közös eredetre, ezt vissza kel
 
 **Két határidő (2026-11-27):** `deadline` = a pályázat / hiánypótlás határideje, `client_deadline` = eddig adja le az ügyfél
 a dokumentumokat. Mindkettőt csak az admin írja (Új projekt és „Adatok szerkesztése” ablak, meglévő projektnél is); a projekt
-fejlécében mindkét fél látja (ügyfélnél „Az Ön határideje”, adminnál „Ügyfél határideje”), 3 napon belül kiemelve. A projektlista
+fejlécében mindkét fél látja nagy csempén (`deadlineTiles()`; ügyfélnél „Az Ön határideje”, adminnál „Ügyfél határideje”), 3 napon belül pirosas. Adminnál a csempe gomb (a projekt adatai ablakot nyitja), a hiányzó határidő helyén szaggatott „+ Megadás” csempe áll; az ügyfél csak a beállítottat látja. A projektlista
 és az értesítő levél továbbra is csak a `deadline`-t mutatja. Kimérve: `npm test`, `test:live` 51/51, felület 390/1280/1366/1536 px.
 
 **Ügyfél-bemutató:** első belépéskor (és a fejléc „Súgó” gombjára) 4 lépéses ablak; a „látta” jelző a böngésző `localStorage`-ében van (`tour-<user id>`), másik eszközön újra megjelenik – ez elfogadott.
