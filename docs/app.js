@@ -223,6 +223,13 @@ async function render(keepScroll) {
   if (no !== renderNo) return;
   app.replaceChildren(...[view].flat());
   window.scrollTo(0, keepScroll ? y : 0);
+  // E-mailből érkező link (#/p/<projekt>/<pont>): az a pont kinyitva, a képernyő tetején.
+  const target = !keepScroll && document.getElementById(`pont-${location.hash.split("/")[3]}`);
+  if (target) {
+    target.open = true;
+    const top = document.querySelector(".top")?.offsetHeight ?? 0;   // a ragadó fejléc ne takarja ki
+    window.scrollTo(0, target.getBoundingClientRect().top + window.scrollY - top - 12);
+  }
   if (me?.role === "client" && me.notify_email && !seenTour() && !document.querySelector("dialog[open]")) tour();
 }
 
@@ -461,18 +468,18 @@ async function projectView(id) {
 }
 
 // Az admin pontonkénti, ÁLLANDÓ utasítása az ügyfélnek (nem üzenet): az ügyfél kék betűvel látja a pont szövege alatt.
-// Mentéskor a pont olvasatlan lesz az ügyfélnek, így a következő kézi értesítésbe bekerül.
+// Mentéskor a pont olvasatlan lesz az ügyfélnek, és bekerül a következő levélbe (points_instruction_changed trigger).
 function instructionEditor(p) {
   const box = h("textarea", { rows: 2, maxlength: 5000, "aria-label": "Teendő az ügyfélnek", placeholder: "Mit kell az ügyfélnek csinálnia ennél a pontnál? (az ügyfél kék betűvel látja)" }, p.instruction || "");
   const save = h("button", { class: "btn", type: "button", onclick: (ev) => run(ev.target, async () => {
     const v = box.value.trim() || null;
-    need(await sb.from("points").update({ instruction: v, client_unread: true, updated_at: new Date().toISOString() }).eq("id", p.id));
+    need(await sb.from("points").update({ instruction: v }).eq("id", p.id));
     p.instruction = v; save.textContent = "✓ Mentve"; setTimeout(() => (save.textContent = "Teendő mentése"), 2500);
   }) }, "Teendő mentése");
   return h("div", { class: "instruction-edit" }, h("h3", {}, "Teendő az ügyfélnek"), box, h("div", { class: "row" }, save));
 }
 
-// Az ügyfél CSAK erre a gombra kap e-mailt: összefoglaló a még nem látott pontokról (új pont, üzenet, státusz).
+// Az ügyfél az utolsó módosítás után kb. 5 perccel magától kap összefoglaló e-mailt; ez a gomb csak előrehozza.
 function notifyBar(project, points) {
   const c = project.client;
   const to = [c.notify_email, c.notify_email2].filter(Boolean);
@@ -480,7 +487,7 @@ function notifyBar(project, points) {
   const editEmails = h("button", { class: "linkish", onclick: () => clientDialog(c, refresh) }, to.length ? "címek módosítása" : "e-mail-cím megadása");
   return h("div", { class: "notify-bar" },
     h("div", {},
-      h("strong", {}, fresh ? `${fresh} pontnál van újdonság, amiről az ügyfél még nem kapott e-mailt.` : "Nincs elküldetlen újdonság."),
+      h("strong", {}, fresh ? `${fresh} pontnál van újdonság – az ügyfél az utolsó módosítás után kb. 5 perccel e-mailt kap róla.` : "Nincs elküldetlen újdonság."),
       h("div", { class: "small" }, to.length ? `Címzett: ${to.join(", ")} · ` : "Az ügyfélnek még nincs e-mail-címe · ", editEmails)),
     h("button", {
       class: "btn primary", disabled: !fresh || !to.length || null,
@@ -490,7 +497,7 @@ function notifyBar(project, points) {
         toast(r?.sent ? `E-mail elküldve (${to.join(", ")}).` : "Nem ment levél: az ügyfél már mindent látott a portálon.");
         refresh();
       }),
-    }, "Értesítés küldése az ügyfélnek"));
+    }, "Küldés most"));
 }
 
 function pointCard(project, p, no) {
@@ -515,7 +522,7 @@ function pointCard(project, p, no) {
     drafts.delete(p.id);
     if (status === "elfogadva") openState.delete(p.id);
     toast(!admin ? "Elküldve."
-      : "Elküldve. Az ügyfél a portálon látja; e-mailt akkor kap, ha fent az „Értesítés küldése” gombra kattint.");
+      : "Elküldve. Az ügyfél kb. 5 perc múlva e-mailt kap róla, benne a link ehhez a ponthoz.");
     refresh();
   });
 
@@ -832,7 +839,7 @@ async function settingsView() {
         h("td", {}, l.recipients),
         h("td", {}, l.subject, l.error && h("div", { class: "s-javitando" }, `Hiba: ${l.error}`))))))
         : h("p", { class: "muted small" }, "Még nem ment ki levél."),
-      h("p", { class: "muted small", style: "margin:.75rem 0 0" }, "Az Ön értesítése az utolsó ügyfél-tevékenység után kb. 5 perccel megy ki, egy levélben összefoglalva. Az ügyfél csak akkor kap levelet, ha a projekt oldalán az „Értesítés küldése” gombra kattint.")),
+      h("p", { class: "muted small", style: "margin:.75rem 0 0" }, "Az Ön értesítése az utolsó ügyfél-tevékenység után kb. 5 perccel megy ki, egy levélben összefoglalva. Az ügyfél ugyanígy: az Ön utolsó módosítása (üzenet, státusz, Teendő, új pont) után kb. 5 perccel kap egy levelet, pontonként linkkel.")),
   ];
 }
 

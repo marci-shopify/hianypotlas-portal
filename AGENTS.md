@@ -165,9 +165,18 @@ dokumentumkezelők, krémszínű szerkesztőségi ügyfélportálok.
 
 ## 5. Értesítések
 
-**Az ügyfél SOHA nem kap automatikus levelet (2026-11-20 óta).** Csak akkor, ha az admin a projekt oldalán az „Értesítés küldése az ügyfélnek” gombra kattint (Edge Function `notify_client`, admin JWT). A levél a legutóbbi kézi küldés óta változott, az ügyfél által még nem látott pontokat foglalja össze, és mindkét címre (`notify_email`, `notify_email2`) megy. Ügyfél felé nincs automatikus újrapróbálás. Az admin felé menő automatikus összefoglaló az alábbiak szerint működik.
+**Mindkét fél automatikusan kap levelet (az ügyfél 2026-11-27 óta újra; 11-20 és 11-27 között csak kézi küldés volt).**
+Az ügyfél levele a legutóbbi levél óta változott, általa még nem látott pontokat foglalja össze, mindkét címére
+(`notify_email`, `notify_email2`) megy, és **minden pontnál saját link** van: `#/p/<projekt>/<pont>` – a portál
+megnyitáskor kinyitja és a képernyő tetejére görgeti azt a pontot (`render()` vége az `app.js`-ben; belépés után is,
+mert a hash megmarad). A nagy gomb az első változott pontra ugrik. A projekt oldalán a „Küldés most” gomb
+(Edge Function `notify_client`, admin JWT) ugyanezt a levelet azonnal kiküldi, az 5 perc megvárása nélkül.
 
-1. Bármi történik (ügyfél-feltöltés, ügyfél-üzenet), a `private.queue_notify`
+Ami az ügyfélnek levelet indít: admin-üzenet, státuszváltás, új pont, admin által mellékelt fájl, a „Teendő” mentése
+(`points_instruction_changed` trigger). **Nem** indít: a pont címének/leírásának javítása (szándékos – elírás miatt
+ne menjen levél). Az időzítő **projektenként** egy van, nem pontonként: egy átnézés = egy levél, pontonkénti linkekkel.
+
+1. Bármi történik (bármelyik fél feltöltése, üzenete, a fentiek), a `private.queue_notify`
    beállítja a projekten a `client_notify_at` vagy `admin_notify_at` mezőt **most + 5 percre**, és a
    ponton az `*_unread` jelzőt. Minden újabb esemény kitolja az időpontot.
 2. A pg_cron percenként futtatja a `private.flush_notifications()`-t, ami az esedékes projektekre
@@ -201,7 +210,7 @@ tesztcímére (`delivered@resend.dev`) küldött levelét a Resend „Delivered�
 A feladó cím csak küldésre szolgál (nincs hozzá postafiók): az ügyfelek válasza a `reply-to`
 fejléc miatt az admin értesítési címére megy.
 
-**Hibakezelés:** ha a küldés elbukik, a function 15 perc múlva újrapróbálja, de projektenként legfeljebb
+**Hibakezelés:** ha a küldés elbukik (bármelyik irányban), a function 15 perc múlva újrapróbálja, de projektenként legfeljebb
 3 kudarcig 2 órán belül (tartós hibánál – rossz cím, rossz jelszó – ne pörögjön). Ha nincs címzett
 (az ügyfél még nem adott meg e-mailt), nem történik küldés és naplóbejegyzés sem; az admin ezt a projekt
 oldalán látja figyelmeztetésként, a saját hiányzó címére pedig a projektlista tetején kap sávot.

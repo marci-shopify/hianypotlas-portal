@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
       case "delete_client": return json(await deleteClientUser(body.id));
       case "delete_project": return json(await deleteProject(body.id));
       case "delete_point": return json(await deletePoint(body.id));
-      // Az ügyfél CSAK erre kap e-mailt (az admin kézi „Értesítés küldése” gombja), automatikusan soha.
+      // „Küldés most”: az admin nem várja meg az automatikus (5 perces) ügyfél-levelet.
       case "notify_client": return json(await notify(body.project_id, "client"));
       case "send_credentials": return json(await sendCredentials(body, me.notify_email));
       case "test_email": {
@@ -209,7 +209,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 const huDate = (d: string) => d.slice(0, 10).replaceAll("-", ". ") + ".";
 
 type Point = {
-  position: number; title: string; status: string; client_unread: boolean; admin_unread: boolean; updated_at: string; instruction: string | null;
+  id: string; position: number; title: string; status: string; client_unread: boolean; admin_unread: boolean; updated_at: string; instruction: string | null;
   files: { name: string; from_admin: boolean; created_at: string }[];
   messages: { body: string; from_admin: boolean; created_at: string }[];
 };
@@ -220,7 +220,7 @@ async function notify(projectId: string, side: "client" | "admin") {
   const { data: p, error } = await db.from("projects")
     .select(`id, title, reference, deadline, client_notified_at, admin_notified_at,
              client:profiles(name, notify_email, notify_email2),
-             points(position, title, instruction, status, client_unread, admin_unread, updated_at,
+             points(id, position, title, instruction, status, client_unread, admin_unread, updated_at,
                     files(name, from_admin, created_at), messages(body, from_admin, created_at))`)
     .eq("id", projectId).single();
   if (error) fail(error.message);
@@ -230,7 +230,7 @@ async function notify(projectId: string, side: "client" | "admin") {
 
   // Csak az, amit a címzett még nem látott a portálon. Ha közben megnézte, nem megy levél.
   const sent = Date.parse((toClient ? p!.client_notified_at : p!.admin_notified_at) ?? "1970-01-01");
-  // ügyfélnél: csak ami a legutóbbi kézi küldés óta változott (különben minden gombnyomás ugyanazt küldené újra)
+  // ügyfélnél: csak ami a legutóbbi levél óta változott (különben minden küldés ugyanazt ismételné)
   const points = all.filter((x) => (toClient ? x.client_unread && Date.parse(x.updated_at) > sent : x.admin_unread));
   if (!points.length) return { skipped: "nincs olvasatlan" };
 
@@ -257,7 +257,9 @@ async function notify(projectId: string, side: "client" | "admin") {
     subject = `${client.name}: új feltöltés vagy üzenet – ${p!.title}`;
     intro = `${client.name} az alábbi pontoknál töltött fel fájlt vagy írt megjegyzést („${p!.title}”).`;
   }
-  const link = `${env("PORTAL_URL").replace(/\/$/, "")}/#/p/${p!.id}`;
+  // Pontra mutató link: a portál a megnyitáskor kinyitja és a képernyő tetejére görgeti azt a pontot (app.js render).
+  const pointLink = (pt: Point) => `${env("PORTAL_URL").replace(/\/$/, "")}/#/p/${p!.id}/${pt.id}`;
+  const link = pointLink(points[0]);   // a nagy gomb az első változott pontra ugrik
   const deadline = p!.deadline ? `Határidő: ${huDate(p!.deadline)}` : "";
 
   const text = [
@@ -267,9 +269,9 @@ async function notify(projectId: string, side: "client" | "admin") {
       ...(toClient && pt.instruction ? [`   Teendő: ${pt.instruction}`] : []),
       ...(files.length ? [`   Új fájl: ${files.map((f) => f.name).join(", ")}`] : []),
       ...msgs.map((m) => `   „${m.body}”`),
+      `   Megnyitás ennél a pontnál: ${pointLink(pt)}`,
       "",
     ]),
-    `Megnyitás a portálon: ${link}`,
   ].filter((l, i, a) => !(l === "" && a[i - 1] === "")).join("\n");
 
   const color: Record<string, string> = { hianyzik: "#827e6e", feltoltve: "#2d5d8c", javitando: "#b3472a", elfogadva: "#1e6a49" };
@@ -281,6 +283,7 @@ ${items.map(({ pt, msgs, files }) => `<div style="border-left:3px solid ${color[
 ${toClient && pt.instruction ? `<div style="font-size:15px;color:#1f4fa3;margin-top:4px;white-space:pre-line"><strong>Teendő:</strong> ${esc(pt.instruction)}</div>` : ""}
 ${files.length ? `<div style="font-size:14px;color:#555">Új fájl: ${esc(files.map((f) => f.name).join(", "))}</div>` : ""}
 ${msgs.map((m) => `<div style="font-size:15px;margin-top:6px;white-space:pre-line">${esc(m.body)}</div>`).join("")}
+<div style="margin-top:8px;font-family:Arial,sans-serif;font-size:14px"><a href="${esc(pointLink(pt))}" style="color:#15382c;font-weight:bold">Megnyitás ennél a pontnál →</a></div>
 </div>`).join("")}
 <p style="margin:24px 0"><a href="${esc(link)}" style="background:#15382c;color:#f6f3ea;padding:12px 24px;text-decoration:none;border-radius:999px;font-family:Arial,sans-serif;font-size:15px;font-weight:bold">Megnyitás a portálon</a></p>
 ${toClient ? `<p style="font-size:13px;color:#777;font-family:Arial,sans-serif">A fájlokat és a választ a portálon tudja feltölteni, illetve megírni.</p>` : ""}
@@ -293,7 +296,7 @@ ${toClient ? `<p style="font-size:13px;color:#777;font-family:Arial,sans-serif">
     // (tartós hibánál – rossz cím, rossz SMTP-jelszó – ne pörögjön örökké; a hibát a mail_log mutatja az adminnak).
     const { count } = await db.from("mail_log").select("id", { count: "exact", head: true })
       .eq("project_id", p!.id).not("error", "is", null).gt("created_at", new Date(Date.now() - 2 * 3600e3).toISOString());
-    if (!toClient && (count ?? 0) < 3) {   // ügyfél felé nincs automatikus újrapróbálás: az admin látja a hibát és újraküldi
+    if ((count ?? 0) < 3) {
       const retryAt = new Date(Date.now() + 15 * 60e3).toISOString();
       await db.from("projects").update(toClient ? { client_notify_at: retryAt } : { admin_notify_at: retryAt }).eq("id", p!.id);
     }

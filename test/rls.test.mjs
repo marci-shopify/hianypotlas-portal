@@ -79,7 +79,7 @@ const [pa, pb, ptA, ptA2, ptB] = await as(ADMIN, async () => {
   const [{ id: ptB }] = await rows(`insert into points (project_id, position, title) values ($1, 1, 'Aláírási címpéldány') returning id`, [pb]);
   return [pa, pb, ptA, ptA2, ptB];
 });
-ok(!(await point(ptA)).client_notify_at, "új pont → ügyfélnek NEM megy automatikus levél");
+ok((await point(ptA)).client_notify_at, "új pont → ügyfél-értesítés ütemezve");
 // eredeti felszólítás: csak admin tölthet a {projekt}/forras/ mappába, olvasni a projekt ügyfele is tudja
 await as(ADMIN, () => db.query(`insert into storage.objects (bucket_id, name, owner_id) values ('docs', $1, $2)`, [`${pa}/forras/x-felhivas.pdf`, ADMIN]));
 await as(A, async () => {
@@ -173,6 +173,14 @@ ok((await point(ptA)).client_unread === false && (await point(ptA2)).client_unre
 ok((await point(ptA)).admin_unread === true, "…de az admin jelzőjét nem");
 ok((await point(ptB)).client_unread === true, "…és B projektjét sem érinti");
 
+// ── Teendő mentése: olvasatlan + levél; a cím javítása nem ──
+await db.exec(`update projects set client_notify_at = null`);
+await as(ADMIN, () => db.query(`update points set title = 'Árajánlatok (3 db)' where id = $1`, [ptA2]));
+ok(!(await point(ptA2)).client_notify_at && !(await point(ptA2)).client_unread, "pont címének javítása → nem megy levél");
+await as(ADMIN, () => db.query(`update points set instruction = 'Kérem aláírva.' where id = $1`, [ptA2]));
+ok((await point(ptA2)).client_unread && (await point(ptA2)).client_notify_at, "Teendő mentése → ügyfél olvasatlan + értesítés ütemezve");
+await db.exec(`update projects set client_notify_at = null`);
+
 // ── B ügyfél semmit nem lát A-ból ──
 await as(B, async () => {
   ok((await rows(`select id from files`)).length === 1, "B csak a saját fájlsorát látja");
@@ -201,7 +209,7 @@ await as(ADMIN, async () => {
 });
 const afterReview = await point(ptA);
 ok(afterReview.status === "javitando" && afterReview.client_unread, "admin válasz → javítandó + ügyfél olvasatlan");
-ok(!afterReview.client_notify_at, "admin válasz → ügyfélnek NEM megy automatikus levél (csak kézi küldés)");
+ok(afterReview.client_notify_at > new Date(Date.now() + 4 * 60e3), "admin válasz → ügyfél-értesítés 5 perc múlvára ütemezve");
 
 await as(A, async () => {
   ok((await rows(`select body from messages where from_admin`)).length === 1, "A látja az admin üzenetét");
