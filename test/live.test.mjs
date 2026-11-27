@@ -96,7 +96,7 @@ try {
   let ca = await login(`teszt-a-${run}`, aPw);
   ok(need(await ca.from("projects").select("id")).length === 1, "A csak a saját projektjét látja");
   const [dl] = need(await ca.from("projects").select("deadline, client_deadline"));
-  ok(dl.deadline === "2030-01-15" && dl.client_deadline === "2030-01-08", "A látja a pályázat és a saját határidejét");
+  ok(dl.deadline === "2030-01-15" && dl.client_deadline === "2030-01-08", "A látja a hiánypótlás és a saját határidejét");
   need(await ca.from("projects").update({ client_deadline: "2031-01-01" }).eq("id", pa));
   ok(need(await admin.from("projects").select("client_deadline").eq("id", pa).single()).client_deadline === "2030-01-08", "A nem írhatja át a határidejét");
   ok(need(await ca.from("profiles").select("id")).length === 1, "A csak a saját profilját látja");

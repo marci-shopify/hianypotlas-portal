@@ -133,11 +133,11 @@ function deadlineTiles(project, admin) {
     const cls = "dl" + (!date ? " empty" : d <= 3 ? " soon" : "");
     return admin ? h("button", { class: cls, type: "button", onclick: () => editProjectDialog(project) }, kids) : h("div", { class: cls }, kids);
   };
-  const tiles = [tile(project.client_deadline, admin ? "Ügyfél határideje" : "Az Ön határideje"), tile(project.deadline, "Pályázat határideje")].filter(Boolean);
+  const tiles = [tile(project.client_deadline, admin ? "Ügyfél határideje" : "Az Ön határideje"), tile(project.deadline, "Hiánypótlás határideje")].filter(Boolean);
   return tiles.length ? h("div", { class: "deadlines" }, tiles) : null;
 }
 const deadlineFields =(p = {}) => h("div", { class: "two" },
-  field("Pályázat határideje", h("input", { type: "date", name: "deadline", value: p.deadline || "" })),
+  field("Hiánypótlás határideje", h("input", { type: "date", name: "deadline", value: p.deadline || "" })),
   field("Ügyfél határideje", h("input", { type: "date", name: "client_deadline", value: p.client_deadline || "" }), "Eddig adjon le mindent. Az ügyfél is látja."));
 const stamp = (status) => h("span", { class: `stamp s-${status}` }, STATUS[status]);
 const segbar = (points) => h("div", { class: "segbar", role: "img", "aria-label": progressText(points) },
