@@ -176,6 +176,11 @@ Ami az ügyfélnek levelet indít: admin-üzenet, státuszváltás, új pont, ad
 (`points_instruction_changed` trigger). **Nem** indít: a pont címének/leírásának javítása (szándékos – elírás miatt
 ne menjen levél). Az időzítő **projektenként** egy van, nem pontonként: egy átnézés = egy levél, pontonkénti linkekkel.
 
+**Kimérve (2026-11-27):** `npm test` (új pont / admin-válasz / Teendő → ügyfél-értesítés ütemezve; cím javítása → nem),
+`npm run test:live` 49/49 (ütemező → function → valódi levél kiment). A pontra görgetés a `render()` kódjának másolatával,
+próba-DOM-on mérve (a pont teteje a ragadó fejléc alatt 12 px-re áll meg; az oldal alján lévő pont csak láthatóvá válik).
+**Nem kimért:** a link valódi, belépett munkamenetben, és a levél HTML-je valódi postafiókban megnyitva.
+
 1. Bármi történik (bármelyik fél feltöltése, üzenete, a fentiek), a `private.queue_notify`
    beállítja a projekten a `client_notify_at` vagy `admin_notify_at` mezőt **most + 5 percre**, és a
    ponton az `*_unread` jelzőt. Minden újabb esemény kitolja az időpontot.
@@ -251,8 +256,10 @@ SMTP_HOST= SMTP_PORT= SMTP_USER= SMTP_PASS= MAIL_FROM=     # lásd 5. pont
 TEST_EMAIL=                     # nem kötelező: ide megy a test:live valódi próbalevele
 ```
 
-- A hozzáférési token **lejár** (a 2026-11-19-én készült 7 napig él). Ha a scriptek 401-et adnak,
-  a tulajdonos generáljon újat az irányítópulton (Project scope → ez az egy projekt), és írja a `.env`-be.
+- A hozzáférési token **lejár**: a mostani (`hianypotlas-portal-deploy-2`, 2026-11-27) 90 napig él, kb. 2027-02-25-ig.
+  Ha a scriptek „Invalid access token”-t adnak: irányítópult → Account → Access Tokens → Generate new token →
+  Resource access: Project → ez az egy projekt → Permissions preset: Full access → az értéket a `.env`-be.
+  (A Chrome-ban a „Continue with GitHub” gomb jelszó nélkül belépteti a tulajdonost, ha a GitHubba be van lépve.)
 - A `service_role` / `sb_secret_…` kulcsot sehol nem tároljuk: a scriptek a Management API-ról kérik
   le futásidőben. **Soha ne írd fájlba, főleg ne a `docs/` alá.**
 - A `docs/config.js`-ben lévő `sb_publishable_…` kulcs nyilvános, az rendben van.
